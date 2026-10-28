@@ -96,6 +96,7 @@ export type Station = {
     telemetry?: Sample;
     error?: string;
     capabilities?: string[];
+    catalog?: string[];
   };
   attempt: null | {
     id: string;
@@ -140,6 +141,7 @@ export type Run = {
   status: string;
   created: number;
   scenario: Scenario;
+  weather_control?: boolean;
   participants: {
     id: string;
     status: string;

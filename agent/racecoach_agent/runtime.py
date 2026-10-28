@@ -113,6 +113,13 @@ class Agent:
                     self.store.queue(f"/api/agent/attempts/{payload['attempt_id']}/finish", {"status": "interrupted", "config": {}, "note": "Sesja zatrzymana"})
                 self.game = "idle"
                 result = {"stopped": True}
+            elif kind == "set_weather":
+                if not self.active or self.active["attempt_id"] != payload.get("attempt_id"):
+                    raise RuntimeError("Zmiana pogody dotyczy nieaktywnej próby")
+                if not self.launcher.weather_active:
+                    raise RuntimeError("Ta sesja nie ma aktywnego kontrolera pogody CSP")
+                values = [max(0.0, min(1.0, float(payload[k]))) for k in ("rain", "wetness", "water")]
+                result = self.launcher.weather.change(*values, transition=float(payload.get("transition", 30)))
             elif kind == "hardware_profile":
                 if self.active or self.game != "idle" or game_running():
                     raise RuntimeError("Zmiana profilu jest dozwolona tylko przed jazdą")
@@ -200,6 +207,8 @@ class Agent:
                         self.error = "Gra działa poza bieżącą próbą agenta; zamknij ją i sprawdź konfigurację"
                 hardware = self.hardware.snapshot()
                 capabilities = ["ac.launch", "ac.multiplayer"]
+                if self.launcher.weather.available():
+                    capabilities.append("weather.csp")
                 if hardware.get("connected"):
                     capabilities.append("hardware.profile")
                 response = self.client.post("/api/agent/heartbeat", json={"version": "0.1.0", "game": self.game,

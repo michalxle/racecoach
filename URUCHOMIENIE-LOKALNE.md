@@ -54,7 +54,7 @@ Jeśli tak się stało, zamknij grę i uruchom **`NAPRAW-KONFIGURACJE-AC.bat`**.
 | `START-RaceCoach.bat` | Instalacja (za pierwszym razem), centrala, rejestracja stanowiska, agent, przeglądarka. Ponowne uruchomienie przy działającej centrali tylko dołącza brakujące elementy. |
 | `PRZYGOTUJ-SCENARIUSZ.bat` | Import toru z Twojej gry (z `ai\fast_lane.ai`), ćwiczenie dla wybranego auta, kursant testowy. Można uruchamiać wielokrotnie dla kolejnych torów/aut. |
 | `DEMO-RaceCoach.bat` | Tryb demonstracyjny bez gry: syntetyczne stanowiska, kursanci i nagrania na `http://localhost:8001`. Dobry do obejrzenia wszystkich ekranów, także sesji grupowej. Dane demo są oddzielne od prawdziwych. |
-| `NAPRAW-KONFIGURACJE-AC.bat` | Przywraca `Dokumenty\Assetto Corsa\cfg\race.ini` po awaryjnym przerwaniu sesji. |
+| `NAPRAW-KONFIGURACJE-AC.bat` | Przywraca `cfg\race.ini` i ustawienia pogody CSP (`cfg\extension\weather_fx.ini`) po awaryjnym przerwaniu sesji. |
 
 ### Parametry (opcjonalne)
 
@@ -99,11 +99,19 @@ Parametry dopisuje się po nazwie pliku w PowerShell/cmd, np. `START-RaceCoach.b
 - Okrążenie wzorcowe ćwiczenia, ocena instruktora (zaliczenie / do powtórzenia + notatka), eksport JSON.
 - Kopia bazy: `.venv\Scripts\python.exe -m racecoach.backup --data .local\live --output .local\backups\kopia.sqlite3`.
 
+**Pogoda i deszcz** (wymaga Custom Shaders Patch z włączonym WeatherFX)
+- W scenariuszu wybierasz **niebo** (pakiet pogody z gry, np. `3_clear` = Bezchmurnie,
+  `7_heavy_clouds` = Duże zachmurzenie) i **deszcz na starcie** w %. Przy deszczu tor jest od startu mokry.
+- Podczas jazdy: **Stanowiska → Zmień warunki** — intensywność deszczu, mokrość nawierzchni, stojąca woda
+  i czas przejścia (domyślnie 30 s). Zmiana narasta płynnie, a panel potwierdza ją dopiero po odczycie z gry.
+- Na czas sesji agent instaluje w grze kontroler pogody `extension\weather-controllers\racecoach` i ustawia go
+  w `Dokumenty\Assetto Corsa\cfg\extension\weather_fx.ini`. Po zakończeniu przywraca Twój poprzedni kontroler
+  (np. Sol). Bez CSP stanowisko odmówi deszczowego scenariusza zamiast jechać na sucho.
+
 **Ograniczenia na jednym komputerze**
 - Tylko jedno stanowisko (jeden agent na komputer). Sesje grupowe wymagają drugiego komputera i osobnej
-  instalacji serwera AC — obejrzysz je w trybie demo.
-- Deszcz i zmiana pogody w trakcie jazdy wymagają mostu do CSP — agent odrzuci scenariusz z deszczem.
-- Godziny 08:00–18:00. Pure/Sol/CSP mogą nadpisać wygląd pogody (status `configuration_only`).
+  instalacji serwera AC — obejrzysz je w trybie demo. Pogoda w sesji grupowej wymaga mostu serwera.
+- Godziny 08:00–18:00.
 - Sekcje toru z importu to równe odcinki, nie zakręty — popraw je w JSON (`.local\live\tracks\`),
   zmień `id` i zaimportuj w **Scenariusze → Importuj tor**.
 
@@ -132,4 +140,6 @@ Folder `.local` nie trafia do Git. Żeby zacząć od zera: zatrzymaj oba okna i 
 | „Na stanowisku brakuje auta lub toru” | Agent widzi tylko zawartość z `content\cars` i `content\tracks` tego folderu gry. |
 | Gra startuje, ale brak telemetrii | Steam włączony, AC 64-bit, ten sam użytkownik Windows; sprawdź `-Documents`. |
 | Tor nie ma na liście | Tor bez `ai\fast_lane.ai` nie da się wyeksportować automatycznie. |
+| „…nie ma Custom Shaders Patch z WeatherFX” | Zainstaluj CSP (np. przez Content Manager) i włącz WeatherFX; agent wykrywa `extension\config\weather_fx.ini` w folderze gry. Uruchom ponownie agenta. |
+| „Kontroler pogody RaceCoach nie uruchomił się” | WeatherFX wyłączony albo gra uruchomiona przez Content Managera z innym kontrolerem; sprawdź `cfg\extension\weather_fx.ini` i log CSP. |
 | Polskie znaki w oknach jako „krzaki” | Kosmetyka konsoli; działanie nie jest zagrożone. |

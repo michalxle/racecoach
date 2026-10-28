@@ -103,6 +103,25 @@ const modeName = (value: string) =>
     : value === "multiplayer"
       ? "Grupowa"
       : "Oba tryby";
+const weatherNames: Record<string, string> = {
+  "1_heavy_fog": "Gęsta mgła",
+  "2_light_fog": "Lekka mgła",
+  "3_clear": "Bezchmurnie",
+  "4_mid_clear": "Prawie bezchmurnie",
+  "5_light_clouds": "Lekkie zachmurzenie",
+  "6_mid_clouds": "Umiarkowane zachmurzenie",
+  "7_heavy_clouds": "Duże zachmurzenie",
+};
+
+/** Czytelna nazwa pakietu pogody AC (np. 3_clear → Bezchmurnie). */
+const weatherName = (id: string) =>
+  weatherNames[id] ??
+  (id
+    .replace(/^(sol|pure)_?\d*_?/i, "")
+    .replace(/_/g, " ")
+    .trim() ||
+    id);
+
 function Badge({ status, label }: { status: string; label?: string }) {
   return (
     <span className={`badge badge-${status}`}>
@@ -1012,11 +1031,15 @@ function Stations({
                   <button
                     className="button secondary small"
                     onClick={() => onModal({ kind: "weather", id: r.id })}
-                    disabled={pending || !weatherAvailable}
+                    disabled={
+                      pending || !(r.weather_control ?? weatherAvailable)
+                    }
                     title={
-                      weatherAvailable
+                      (r.weather_control ?? weatherAvailable)
                         ? undefined
-                        : "Zmiana pogody podczas jazdy wymaga mostu do kontrolera CSP (RACECOACH_WEATHER_BRIDGE). Warunki startowe ustawia scenariusz."
+                        : r.mode === "individual"
+                          ? "Stanowisko nie zgłasza Custom Shaders Patch z WeatherFX; zmiana pogody podczas jazdy jest niedostępna."
+                          : "Sesja grupowa wymaga mostu pogodowego serwera (RACECOACH_WEATHER_BRIDGE)."
                     }
                   >
                     Zmień warunki
@@ -1531,9 +1554,10 @@ function Exercises({
                   <div>
                     <span>Warunki</span>
                     <strong>
+                      {weatherName(e.conditions.weather)}
                       {e.conditions.rain
-                        ? `Deszcz ${e.conditions.rain * 100}%`
-                        : e.conditions.weather}
+                        ? ` · deszcz ${Math.round(e.conditions.rain * 100)}%`
+                        : ""}
                     </strong>
                   </div>
                   <div>
@@ -2359,6 +2383,7 @@ function FormModal({
     rain: "0",
     wetness: "0",
     water: "0",
+    transition: "30",
     time: "13:00",
     profile: "off",
     degrees: String(station?.state.hardware?.degrees ?? 900),
@@ -2445,6 +2470,7 @@ function FormModal({
           rain: Number(values.rain) / 100,
           wetness: Number(values.wetness) / 100,
           water: Number(values.water) / 100,
+          transition: Number(values.transition),
         };
       if (modal.kind === "review")
         body = { note: values.note, decision: values.decision };
@@ -2456,6 +2482,19 @@ function FormModal({
       setBusy(false);
     }
   }
+  const installedWeather = data.stations.flatMap((s) =>
+    (s.state.catalog ?? [])
+      .filter((entry) => entry.startsWith("weather:"))
+      .map((entry) => entry.slice("weather:".length)),
+  );
+  const weatherOptions = Array.from(
+    new Set([
+      ...(installedWeather.length
+        ? installedWeather
+        : Object.keys(weatherNames)),
+      values.weather,
+    ]),
+  ).sort();
   const field = (
     key: string,
     label: string,
@@ -2606,12 +2645,26 @@ function FormModal({
                 {field("road_temp", "Temperatura toru (°C)", "number", -10, 80)}
                 {field("grip", "Przyczepność (%)", "number", 50, 100)}
                 {field("time", "Pora dnia", "time")}
-                {field("rain", "Deszcz (%)", "number", 0, 100)}
-                {field("weather", "Identyfikator pogody")}
+                {field("rain", "Deszcz na starcie (%)", "number", 0, 100)}
+                <label>
+                  Niebo (pakiet pogody z gry)
+                  <select
+                    value={values.weather}
+                    onChange={(e) => set("weather", e.target.value)}
+                  >
+                    {weatherOptions.map((id) => (
+                      <option key={id} value={id}>
+                        {weatherName(id)} ({id})
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
               <p className="muted">
-                Scenariusz deszczowy wymaga adaptera CSP. Bazowy agent odmówi
-                uruchomienia zamiast zastąpić deszcz suchą pogodą.
+                Pakiet pogody ustala niebo i oświetlenie. Deszcz na starcie i
+                zmiany podczas jazdy wymagają na stanowisku Custom Shaders Patch
+                z włączonym WeatherFX; bez niego stanowisko odmówi startu
+                zamiast jechać na sucho.
               </p>
               <label>
                 Profil bazy wymagany w ćwiczeniu
@@ -2638,14 +2691,16 @@ function FormModal({
           {modal.kind === "weather" && (
             <>
               <div className="notice">
-                Polecenie zostanie zastosowane do wspólnej sesji i zapisane w
-                jej historii. Rzeczywista gra wymaga skonfigurowanego adaptera
-                pogodowego.
+                Warunki zmienią się płynnie w podanym czasie, a zmiana zostanie
+                zapisana w historii próby. Mokrość to wilgoć nawierzchni (przy
+                deszczu szybko rośnie), stojąca woda to kałuże i ryzyko
+                aquaplaningu. Ok. 50% deszczu to już mocna ulewa.
               </div>
               <div className="form-grid">
                 {field("rain", "Intensywność deszczu (%)", "number", 0, 100)}
                 {field("wetness", "Mokrość nawierzchni (%)", "number", 0, 100)}
                 {field("water", "Stojąca woda (%)", "number", 0, 100)}
+                {field("transition", "Czas przejścia (s)", "number", 0, 600)}
               </div>
             </>
           )}

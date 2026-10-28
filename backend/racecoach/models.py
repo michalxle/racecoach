@@ -206,3 +206,4 @@ class WeatherChange(Model):
     rain: float = Field(ge=0, le=1)
     wetness: float = Field(ge=0, le=1)
     water: float = Field(ge=0, le=1)
+    transition: float = Field(default=30, ge=0, le=600)

@@ -9,6 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from .csp_weather import CspWeather
 from .shared_memory import ACReader
 
 
@@ -28,6 +29,12 @@ class Launcher:
         self.backup = self.data_dir / "race.ini.backup"
         self.existed = self.data_dir / "race.ini.existed"
         self.cancel = None
+        self.weather = CspWeather(self.game_dir, self.documents, self.data_dir)
+        self.weather_active = False
+
+    def weather_presets(self):
+        folder = self.game_dir / "content/weather"
+        return sorted(p.name for p in folder.iterdir() if p.is_dir()) if folder.is_dir() else []
 
     def catalog(self):
         result = []
@@ -44,6 +51,7 @@ class Launcher:
                 for layout in track.iterdir():
                     if layout.is_dir() and ((layout / "data").exists() or (layout / "data.acd").exists()):
                         result.append(f"track:{track.name}:{layout.name}")
+        result.extend("weather:" + name for name in self.weather_presets())
         return result
 
     def prepare(self, scenario):
@@ -66,13 +74,16 @@ class Launcher:
         hour, minute = map(int, scenario["conditions"]["time"].split(":"))
         if not 8 * 60 <= hour * 60 + minute <= 18 * 60:
             raise RuntimeError("Podstawowy adapter obsługuje godziny 08:00–18:00; pozostałe wymagają adaptera CSP")
-        if scenario["conditions"].get("rain", 0):
-            raise RuntimeError("Scenariusz deszczowy wymaga adaptera kontrolera CSP; nie zostanie uruchomiony jako suchy")
-        if self.backup.exists() or self.existed.exists():
+        live_weather = scenario["mode"] != "multiplayer" and self.weather.available()
+        if scenario["conditions"].get("rain", 0) and not live_weather:
+            if scenario["mode"] == "multiplayer":
+                raise RuntimeError("Deszcz w sesji grupowej wymaga mostu pogodowego serwera; nie zostanie uruchomiony jako suchy")
+            raise RuntimeError("Deszcz wymaga Custom Shaders Patch z włączonym WeatherFX (folder extension w grze); nie zostanie uruchomiony jako suchy")
+        if self.backup.exists() or self.existed.exists() or self.weather.pending_restore():
             raise RuntimeError("Pozostała kopia konfiguracji po poprzednim uruchomieniu. Uruchom agenta z --restore-config po zamknięciu gry")
         if scenario["mode"] == "multiplayer" and not scenario.get("connection"):
             raise RuntimeError("Brak konfiguracji serwera sesji grupowej")
-        return {"verified": True, "contents": sorted(required), "simulated": False}
+        return {"verified": True, "contents": sorted(required), "simulated": False, "weather_control": live_weather}
 
     def choose_skin(self, car, preferred=""):
         """Stałe malowanie: pusty SKIN w race.ini sprawia, że AC losuje malowanie przy każdym starcie."""
@@ -123,7 +134,11 @@ class Launcher:
             shutil.copy2(race_file, self.backup)
         else:
             self.existed.write_text("new", encoding="utf-8")
+        self.weather_active = False
         try:
+            if scenario["mode"] != "multiplayer" and self.weather.available():
+                self.weather.enable(scenario["conditions"])
+                self.weather_active = True
             temporary = race_file.with_suffix(".racecoach.tmp")
             with temporary.open("w", encoding="utf-8") as f:
                 # AC czyta "KLUCZ=wartość"; spacje wokół "=" trafiają do wartości (TRACK NOT FOUND).
@@ -149,6 +164,17 @@ class Launcher:
                         actual["assists_file_sha256"] = hashlib.sha256(assists.read_bytes()).hexdigest() if assists.exists() else None
                         actual["conditions_requested"] = scenario["conditions"]
                         actual["conditions_confirmation"] = "configuration_only"
+                        actual["weather_control"] = False
+                        if self.weather_active:
+                            state = self.weather.confirm_start()
+                            if state is not None:
+                                actual["conditions_confirmation"] = "csp_controller"
+                                actual["weather_control"] = True
+                                actual["weather_applied"] = {"rain": round(state["applied_rain"], 3),
+                                                             "wetness": round(state["applied_wetness"], 3),
+                                                             "water": round(state["applied_water"], 3)}
+                            elif scenario["conditions"].get("rain", 0):
+                                raise RuntimeError("Kontroler pogody RaceCoach nie uruchomił się w grze; sprawdź, czy CSP WeatherFX jest włączony")
                         return actual
                 except OSError:
                     pass
@@ -171,6 +197,8 @@ class Launcher:
     def restore(self):
         if game_running():
             raise RuntimeError("Zamknij grę przed przywróceniem konfiguracji")
+        self.weather.restore()
+        self.weather_active = False
         race_file = self.documents / "cfg/race.ini"
         if self.backup.exists():
             shutil.copy2(self.backup, race_file)

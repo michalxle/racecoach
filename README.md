@@ -264,7 +264,7 @@ Stan `unknown` wymaga sprawdzenia lokalnego procesu i konfiguracji, zanim zwolni
 | Nieaktywna zmiana profilu / brak bazy | Agent z `--hardware`, osobny `wheel-control`, zależności `[hardware]`, połączenie USB i brak drugiego właściciela COM/HID. |
 | Brak porównania lub błędna mapa | Pełne okrążenia bez luk, zgodny tor/layout i wersja geometrii, poprawne granice sekcji względem postępu gry. |
 | Zwykła pogoda i pora dnia | Adapter generuje konfigurację początkową; zakres 08:00–18:00. Status `configuration_only` wymaga sprawdzenia w grze, zwłaszcza przy Pure/Sol/CSP. |
-| Deszcz / zmiana pogody podczas jazdy | Potrzebny własny adapter CSP i most pogodowy; sam Content Manager tego nie zapewnia. Bazowy agent odmawia startu scenariusza z deszczem. [Kontrakt mostu](docs/windows-station.md#pogoda-i-csp). |
+| Deszcz / zmiana pogody podczas jazdy | Trening indywidualny: CSP z włączonym WeatherFX na stanowisku — agent instaluje kontroler `racecoach` i zmienia deszcz, mokrość i wodę z potwierdzeniem z gry ([szczegóły](URUCHOMIENIE-LOKALNE.md#co-system-potrafi)). Sesja grupowa: most pogodowy serwera ([kontrakt](docs/windows-station.md#pogoda-i-csp)). Bez CSP agent odmawia startu scenariusza z deszczem. |
 | Pedały i kierownica ESP32 | Odczyt osi/przycisków przez WinMM; zdalny zapis parametrów firmware wymaga dodatkowego protokołu i implementacji. |
 
 Testy automatyczne zastępują proces gry i urządzenia obiektami testowymi. **Nie potwierdzają
