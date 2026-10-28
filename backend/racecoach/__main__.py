@@ -11,7 +11,7 @@ def main():
     args = parser.parse_args()
     import uvicorn
     from .app import create_app
-    uvicorn.run(create_app(args.data, demo=args.demo), host=args.host, port=args.port)
+    uvicorn.run(create_app(args.data, demo=args.demo), host=args.host, port=args.port, access_log=False)
 
 
 if __name__ == "__main__":

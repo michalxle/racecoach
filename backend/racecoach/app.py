@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from .db import Database, dump, uid
 from .models import Login, PlanCreate, PlanItemCreate, PlanItemUpdate, StationCreate, TraineeCreate
 from .security import LoginLimiter, digest, new_token, password_hash, password_matches
+from .instance_lock import InstanceLock
 
 COOKIE = "racecoach_session"
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,50 +55,64 @@ def station(request: Request):
 
 
 def create_app(data_dir: str | Path | None = None, demo=False, bootstrap_admin=True):
-    data_dir = Path(data_dir or os.environ.get("RACECOACH_DATA", ROOT / ".local"))
+    default_dir = ROOT / ".local" if demo else ROOT / ".local/live"
+    data_dir = Path(data_dir or os.environ.get("RACECOACH_DATA") or default_dir)
     db = Database(data_dir / "racecoach.sqlite3")
+    existing_mode = db.one("SELECT value FROM metadata WHERE key='installation_mode'")
+    requested_mode = "demo" if demo else "live"
+    inherited_demo = db.one("SELECT id FROM stations WHERE simulated=1 LIMIT 1")
+    if (existing_mode and existing_mode["value"] != requested_mode) or (not demo and inherited_demo):
+        db.close()
+        raise RuntimeError("Ten folder danych należy do innego trybu. Oddziel dane demonstracyjne od rzeczywistych przez --data")
+    with db.transaction() as c:
+        c.execute("INSERT OR IGNORE INTO metadata VALUES ('installation_mode',?)", (requested_mode,))
     limiter = LoginLimiter()
 
     @asynccontextmanager
     async def lifespan(app):
         import asyncio
-        if bootstrap_admin and not db.one("SELECT id FROM users LIMIT 1"):
-            token = "Trening2026!" if demo else new_token()[:20]
-            email = "instruktor@demo.local" if demo else "instruktor@local"
-            with db.transaction() as c:
-                c.execute("INSERT INTO users VALUES (?,?,?,?,?,?)",
-                          (uid(), email, "Instruktor", "instructor", password_hash(token), time.time()))
-            credentials = data_dir / "bootstrap.json"
-            fd = os.open(credentials, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
-                f.write(dump({"email": email, "password": token, "demo": demo}))
-        task = None
-        if demo:
-            import asyncio
-            from .demo import seed, demo_loop
-            seed(db)
-            task = asyncio.create_task(demo_loop(db))
-        async def monitor_expirations():
-            from .routes import expire_commands
-            while True:
-                expire_commands(db)
-                await asyncio.sleep(1)
-        expiration_task = asyncio.create_task(monitor_expirations())
-        yield
-        expiration_task.cancel()
+        instance = InstanceLock(data_dir / "server.lock")
         try:
-            await expiration_task
-        except asyncio.CancelledError:
-            pass
-        if task:
-            import asyncio
-            task.cancel()
+            instance.acquire()
+        except RuntimeError:
+            db.close()
+            raise
+        tasks = []
+        try:
+            if bootstrap_admin and not db.one("SELECT id FROM users LIMIT 1"):
+                token = "Trening2026!" if demo else new_token()[:20]
+                email = "instruktor@demo.local" if demo else "instruktor@local"
+                credentials = data_dir / "bootstrap.json"
+                fd = os.open(credentials, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                if hasattr(os, "fchmod"):
+                    os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w") as f:
+                    f.write(dump({"email": email, "password": token, "demo": demo}))
+                with db.transaction() as c:
+                    c.execute("INSERT INTO users VALUES (?,?,?,?,?,?)",
+                              (uid(), email, "Instruktor", "instructor", password_hash(token), time.time()))
+            if demo:
+                from .demo import seed, demo_loop
+                seed(db)
+                tasks.append(asyncio.create_task(demo_loop(db)))
+            async def monitor_expirations():
+                from .routes import expire_commands
+                while True:
+                    expire_commands(db)
+                    await asyncio.sleep(1)
+            tasks.append(asyncio.create_task(monitor_expirations()))
+            yield
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        app.state.server_manager.stop()
-        db.close()
+                app.state.server_manager.stop()
+            finally:
+                try:
+                    db.close()
+                finally:
+                    instance.release()
 
     app = FastAPI(title="RaceCoach", version="0.1.0", lifespan=lifespan)
     app.state.db = db
@@ -113,8 +128,15 @@ def create_app(data_dir: str | Path | None = None, demo=False, bootstrap_admin=T
             if origin and urlsplit(origin).netloc != request.headers.get("host"):
                 return Response("Niedozwolone źródło żądania", status_code=403)
             length = request.headers.get("content-length")
-            if length and int(length) > 2_000_000:
-                return Response("Zbyt duże żądanie", status_code=413)
+            if length:
+                try:
+                    size = int(length)
+                    if size < 0:
+                        raise ValueError
+                except ValueError:
+                    return Response("Niepoprawna długość żądania", status_code=400)
+                if size > 2_000_000:
+                    return Response("Zbyt duże żądanie", status_code=413)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"

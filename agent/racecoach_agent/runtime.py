@@ -30,6 +30,7 @@ class Agent:
         self.game = "idle"
         self.error = None
         self.shutdown = threading.Event()
+        self.launcher.cancel = self.shutdown
 
     def flush(self):
         for _ in range(12):
@@ -201,6 +202,10 @@ class Agent:
         self.shutdown.set()
         self.pool.shutdown(wait=True)
         self.stop_recording()
+        try:
+            self.launcher.stop()
+        except Exception:
+            log.exception("Konfiguracja wymaga lokalnego sprawdzenia po zamknięciu agenta")
         self.finish("interrupted", "Agent wyłączony")
         try:
             self.flush()

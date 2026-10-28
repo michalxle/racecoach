@@ -18,6 +18,7 @@ def dump(value) -> str:
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS users (
  id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
  role TEXT NOT NULL CHECK(role IN ('instructor','trainee','service')), password_hash TEXT NOT NULL,
@@ -102,7 +103,7 @@ class Database:
                 self.connection.execute("UPDATE tracks SET game_id=id")
             if "hardware_profile" not in {row[1] for row in self.connection.execute("PRAGMA table_info(exercises)")}:
                 self.connection.execute("ALTER TABLE exercises ADD COLUMN hardware_profile TEXT")
-            self.connection.execute("PRAGMA user_version=3")
+            self.connection.execute("PRAGMA user_version=4")
             self.connection.commit()
 
     @contextmanager

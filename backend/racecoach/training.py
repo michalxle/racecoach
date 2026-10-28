@@ -261,8 +261,16 @@ def register_training_routes(app, db):
         for key, label in (("car", "Różne samochody"), ("conditions", "Różne warunki początkowe")):
             if a[key] != b[key]:
                 warnings.append(label)
-        if own["config"] != target["config"]:
+        def comparable_config(raw):
+            config = json.loads(raw)
+            result = {k: config.get(k) for k in ("track_id", "layout", "car", "game_version", "shared_version", "assists", "assists_file_sha256", "conditions_requested")}
+            hardware = config.get("hardware", {})
+            result["hardware"] = {k: hardware.get(k) for k in ("firmware", "degrees", "strength", "max_strength")}
+            return result
+        if comparable_config(own["config"]) != comparable_config(target["config"]):
             warnings.append("Różnice lub niepełna zgodność zapisanej konfiguracji klientów")
+        if a["track"]["source"] != "demo" and json.loads(own["config"]).get("conditions_confirmation") != "verified":
+            warnings.append("Warunki pochodzą z konfiguracji; pełny stan kontrolera CSP nie jest potwierdzony")
         events = db.one("SELECT id FROM audit WHERE action='weather.changed' AND target IN (?,?) LIMIT 1", (own["run_id"], target["run_id"]))
         if events:
             warnings.append("Warunki zmieniały się podczas jazdy; sprawdź dziennik pogody")

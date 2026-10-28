@@ -27,6 +27,7 @@ class Launcher:
         self.process = None
         self.backup = self.data_dir / "race.ini.backup"
         self.existed = self.data_dir / "race.ini.existed"
+        self.cancel = None
 
     def catalog(self):
         result = []
@@ -62,9 +63,9 @@ class Launcher:
         weather = scenario["conditions"]["weather"]
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", weather) or weather in (".", "..") or not (self.game_dir / "content/weather" / weather).is_dir():
             raise RuntimeError("Brak wskazanego pakietu pogody w lokalnej instalacji gry")
-        hour = int(scenario["conditions"]["time"][:2])
-        if not 8 <= hour <= 18:
-            raise RuntimeError("Podstawowy adapter obsługuje godziny 08:00–18:59; pozostałe wymagają adaptera CSP")
+        hour, minute = map(int, scenario["conditions"]["time"].split(":"))
+        if not 8 * 60 <= hour * 60 + minute <= 18 * 60:
+            raise RuntimeError("Podstawowy adapter obsługuje godziny 08:00–18:00; pozostałe wymagają adaptera CSP")
         if scenario["conditions"].get("rain", 0):
             raise RuntimeError("Scenariusz deszczowy wymaga adaptera kontrolera CSP; nie zostanie uruchomiony jako suchy")
         if self.backup.exists() or self.existed.exists():
@@ -125,6 +126,8 @@ class Launcher:
         try:
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
+                if self.cancel is not None and self.cancel.is_set():
+                    raise RuntimeError("Uruchamianie anulowane przy wyłączeniu agenta")
                 if self.process.poll() is not None:
                     raise RuntimeError("Gra zakończyła się przed potwierdzeniem sesji. Sprawdź Steam i logi AC")
                 try:

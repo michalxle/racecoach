@@ -57,13 +57,14 @@ class ServerManager:
             config["PRACTICE"] = {"NAME": "Szkolenie", "TIME": str(scenario["duration"]), "IS_OPEN": "1"}
             conditions = scenario["conditions"]
             hour, minute = map(int, conditions["time"].split(":"))
-            if not 8 <= hour <= 18:
+            if not 8 * 60 <= hour * 60 + minute <= 18 * 60:
                 raise RuntimeError("Bazowy serwer obsługuje godziny dzienne; pozostałe wymagają integracji CSP")
             server["SUN_ANGLE"] = str(round((hour + minute / 60 - 13) * 16))
             if conditions["rain"]:
                 raise RuntimeError("Deszcz wymaga skonfigurowanej integracji CSP; bazowy serwer nie potwierdza tego scenariusza")
             config["WEATHER_0"] = {"GRAPHICS": conditions["weather"], "BASE_TEMPERATURE_AMBIENT": str(conditions["air_temp"]),
-                                   "BASE_TEMPERATURE_ROAD": str(conditions["road_temp"] - conditions["air_temp"]), "VARIATION_AMBIENT": "0", "VARIATION_ROAD": "0"}
+                                   "BASE_TEMPERATURE_ROAD": str(conditions["road_temp"] - conditions["air_temp"]), "VARIATION_AMBIENT": "0", "VARIATION_ROAD": "0",
+                                   "WIND_BASE_SPEED_MIN": "0", "WIND_BASE_SPEED_MAX": "0", "WIND_BASE_DIRECTION": "0", "WIND_VARIATION_DIRECTION": "0"}
             config["DYNAMIC_TRACK"] = {"SESSION_START": str(conditions["grip"] * 100), "RANDOMNESS": "0", "LAP_GAIN": "0", "SESSION_TRANSFER": "100"}
             entries = configparser.ConfigParser(interpolation=None)
             entries.optionxform = str
