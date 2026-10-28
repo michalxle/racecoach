@@ -54,7 +54,10 @@ class ServerManager:
             for name in list(config.sections()):
                 if name in ("PRACTICE", "QUALIFY", "RACE", "BOOK", "DYNAMIC_TRACK") or name.startswith("WEATHER_"):
                     config.remove_section(name)
-            config["PRACTICE"] = {"NAME": "Szkolenie", "TIME": str(scenario["duration"]), "IS_OPEN": "1"}
+            if scenario.get("race_laps"):
+                config["RACE"] = {"NAME": "Wyścig", "LAPS": str(scenario["race_laps"]), "WAIT_TIME": "60", "IS_OPEN": "2"}
+            else:
+                config["PRACTICE"] = {"NAME": "Szkolenie", "TIME": str(scenario["duration"]), "IS_OPEN": "1"}
             conditions = scenario["conditions"]
             hour, minute = map(int, conditions["time"].split(":"))
             if not 8 * 60 <= hour * 60 + minute <= 18 * 60:

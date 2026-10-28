@@ -21,6 +21,9 @@ def main():
     parser.add_argument("--ddcontrol")
     parser.add_argument("--max-strength", type=int, default=25)
     parser.add_argument("--restore-config", action="store_true")
+    parser.add_argument("--overlay-port", type=int, default=31399, help="port lokalnej strony nakładek (127.0.0.1)")
+    parser.add_argument("--no-overlay-window", action="store_true", help="bez okna nakładek nad grą (zostają aplikacje w AC)")
+    parser.add_argument("--kiosk", action="store_true", help="przy starcie sesji otwórz ekran kierowcy w Edge (tryb kiosk)")
     args = parser.parse_args()
     if not 0 <= args.max_strength <= 100:
         parser.error("--max-strength musi należeć do zakresu 0–100")
@@ -42,7 +45,8 @@ def main():
         parser.error("Ustaw RACECOACH_AGENT_TOKEN tokenem uzyskanym przy rejestracji stanowiska")
     hardware = Hardware(args.hardware, args.ddcontrol, args.max_strength)
     store = AgentStore(Path(args.data) / "agent.sqlite3")
-    agent = Agent(args.server, token, store, launcher, hardware)
+    agent = Agent(args.server, token, store, launcher, hardware, overlay_port=args.overlay_port,
+                  overlay_window=not args.no_overlay_window, kiosk=args.kiosk)
     try:
         agent.run()
     except KeyboardInterrupt:

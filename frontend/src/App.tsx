@@ -26,12 +26,18 @@ import {
   Target,
   Timer,
   TrendingUp,
+  Trophy,
+  MessageSquare,
+  Layers,
   Users,
   Wifi,
   WifiOff,
   X,
 } from "lucide-react";
 import { ApiError, api, date, delta, lapTime, post, statusNames } from "./api";
+import { ExerciseForm } from "./content";
+import { AttemptCoach, Classification, CoachLive, Rankings } from "./coaching";
+import type { Content } from "./content";
 import type {
   Analysis,
   Attempt,
@@ -62,6 +68,7 @@ type Page =
   | "exercises"
   | "attempts"
   | "analysis"
+  | "rankings"
   | "settings";
 type Modal = {
   kind:
@@ -74,7 +81,8 @@ type Modal = {
     | "pair"
     | "import"
     | "review"
-    | "weather";
+    | "weather"
+    | "message";
   id?: string;
 };
 const empty: Data = {
@@ -86,6 +94,7 @@ const empty: Data = {
   attempts: [],
   runs: [],
   commands: [],
+  carNames: {},
 };
 const navigation = [
   { id: "overview", name: "Przegląd", icon: LayoutDashboard },
@@ -95,6 +104,7 @@ const navigation = [
   { id: "exercises", name: "Scenariusze", icon: Flag },
   { id: "attempts", name: "Przejazdy", icon: Timer },
   { id: "analysis", name: "Analiza przejazdu", icon: Activity },
+  { id: "rankings", name: "Rankingi", icon: Trophy },
   { id: "settings", name: "Integracje i dziennik", icon: Settings },
 ] as const;
 const modeName = (value: string) =>
@@ -213,9 +223,14 @@ export default function App() {
       null,
     );
   const [pending, setPending] = useState(false);
+  const carNames = useRef<Record<string, string> | null>(null);
   const refresh = useCallback(async () => {
     if (!session) return;
     try {
+      if (!carNames.current)
+        carNames.current = await api<Content>("/content")
+          .then((c) => Object.fromEntries(c.cars.map((x) => [x.id, x.name])))
+          .catch(() => null);
       const privileged = session.role !== "trainee";
       const [
         trainees,
@@ -245,6 +260,7 @@ export default function App() {
         attempts,
         runs,
         commands,
+        carNames: carNames.current ?? {},
       });
       setConnected(true);
     } catch (error) {
@@ -307,6 +323,7 @@ export default function App() {
       import: "/tracks",
       review: `/attempts/${id}/review`,
       weather: `/runs/${id}/weather`,
+      message: `/stations/${id}/message`,
     };
     result = await post(endpoints[kind], body);
     if (kind === "pair") setSecret(result as { name: string; token: string });
@@ -319,7 +336,9 @@ export default function App() {
           ? "Przygotowanie zlecone. Poczekaj na gotowość stanowisk, a następnie wybierz Start."
           : kind === "profile"
             ? "Profil wysłany. Wynik odczytu zwrotnego zobaczysz w dzienniku."
-            : "Zmiany zostały zapisane.",
+            : kind === "message"
+              ? "Wiadomość wysłana – pojawi się w nakładce kierowcy."
+              : "Zmiany zostały zapisane.",
     });
   }
   if (session === undefined)
@@ -336,7 +355,9 @@ export default function App() {
   const allowed = privileged
     ? navigation
     : navigation.filter((n) =>
-        ["overview", "plans", "attempts", "analysis"].includes(n.id),
+        ["overview", "plans", "attempts", "analysis", "rankings"].includes(
+          n.id,
+        ),
       );
   return (
     <div className="app-shell">
@@ -514,6 +535,9 @@ export default function App() {
                 )
               }
             />
+          )}
+          {page === "rankings" && (
+            <Rankings data={data} privileged={privileged} selfId={session.id} />
           )}
           {page === "settings" && privileged && (
             <Integrations data={data} onModal={setModal} />
@@ -996,6 +1020,14 @@ function Stations({
                 </div>
               </div>
               <Badge status={r.status} />
+              {r.classification && r.classification.length > 0 && (
+                <div className="run-classification">
+                  <span className="eyebrow">
+                    Wyścig · {r.scenario.race_laps} okr.
+                  </span>
+                  <Classification rows={r.classification} />
+                </div>
+              )}
               <div className="row-actions">
                 {r.status === "ready" && (
                   <button
@@ -1120,6 +1152,7 @@ function Stations({
                   </strong>
                 </div>
               </div>
+              {s.online && s.state.coach && <CoachLive coach={s.state.coach} />}
               <div className="station-inputs">
                 <Meter
                   label="Gaz"
@@ -1174,6 +1207,28 @@ function Stations({
                   <SlidersHorizontal size={14} />
                   Profil DD
                 </button>
+                {!s.simulated && (
+                  <>
+                    <button
+                      className="text-button"
+                      disabled={!s.online}
+                      onClick={() => onModal({ kind: "message", id: s.id })}
+                    >
+                      <MessageSquare size={14} />
+                      Wiadomość
+                    </button>
+                    <a
+                      className="text-button"
+                      href={`/overlay/${encodeURIComponent(s.id)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Podgląd i układ nakładek w grze"
+                    >
+                      <Layers size={14} />
+                      Nakładki
+                    </a>
+                  </>
+                )}
               </div>
             </section>
           );
@@ -1538,7 +1593,7 @@ function Exercises({
                 </div>
                 <h2>{e.title}</h2>
                 <p>
-                  {e.track_name} · {e.car}
+                  {e.track_name} · {data.carNames[e.car] ?? e.car}
                 </p>
                 <div className="exercise-values">
                   <div>
@@ -2191,6 +2246,7 @@ function Report({
               )}
             </>
           )}
+          <AttemptCoach attemptId={attempt.id} />
         </>
       )}
     </>
@@ -2384,6 +2440,7 @@ function FormModal({
     wetness: "0",
     water: "0",
     transition: "30",
+    text: "",
     time: "13:00",
     profile: "off",
     degrees: String(station?.state.hardware?.degrees ?? 900),
@@ -2411,6 +2468,7 @@ function FormModal({
     import: "Importuj pakiet toru",
     review: "Ocena przejazdu",
     weather: "Zmień warunki podczas jazdy",
+    message: `Wiadomość do kierowcy · ${station?.name ?? ""}`,
   };
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -2474,6 +2532,7 @@ function FormModal({
         };
       if (modal.kind === "review")
         body = { note: values.note, decision: values.decision };
+      if (modal.kind === "message") body = { text: values.text };
       if (modal.kind === "import") body = JSON.parse(values.json);
       await onSubmit(modal.kind, body, modal.id);
     } catch (e) {
@@ -2482,19 +2541,6 @@ function FormModal({
       setBusy(false);
     }
   }
-  const installedWeather = data.stations.flatMap((s) =>
-    (s.state.catalog ?? [])
-      .filter((entry) => entry.startsWith("weather:"))
-      .map((entry) => entry.slice("weather:".length)),
-  );
-  const weatherOptions = Array.from(
-    new Set([
-      ...(installedWeather.length
-        ? installedWeather
-        : Object.keys(weatherNames)),
-      values.weather,
-    ]),
-  ).sort();
   const field = (
     key: string,
     label: string,
@@ -2539,6 +2585,12 @@ function FormModal({
         <RunForm
           data={data}
           onSubmit={(body) => onSubmit("run", body)}
+          onClose={onClose}
+        />
+      ) : modal.kind === "exercise" ? (
+        <ExerciseForm
+          data={data}
+          onSubmit={(body) => onSubmit("exercise", body)}
           onClose={onClose}
         />
       ) : (
@@ -2614,78 +2666,40 @@ function FormModal({
               </div>
             </>
           )}
-          {modal.kind === "exercise" && (
+          {modal.kind === "message" && (
             <>
-              {field("title", "Nazwa scenariusza")}
-              <label>
-                Tor i wersja
-                <select
-                  required
-                  value={values.track_id}
-                  onChange={(e) => set("track_id", e.target.value)}
-                >
-                  {data.tracks.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} · {t.layout || "pełna pętla"} · {t.version}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {field("car", "Identyfikator samochodu w grze")}
-              <div className="form-grid">
-                {modes}
-                {field("duration", "Długość sesji (min)", "number", 1, 180)}
-                {field(
-                  "air_temp",
-                  "Temperatura powietrza (°C)",
-                  "number",
-                  -10,
-                  50,
-                )}
-                {field("road_temp", "Temperatura toru (°C)", "number", -10, 80)}
-                {field("grip", "Przyczepność (%)", "number", 50, 100)}
-                {field("time", "Pora dnia", "time")}
-                {field("rain", "Deszcz na starcie (%)", "number", 0, 100)}
-                <label>
-                  Niebo (pakiet pogody z gry)
-                  <select
-                    value={values.weather}
-                    onChange={(e) => set("weather", e.target.value)}
-                  >
-                    {weatherOptions.map((id) => (
-                      <option key={id} value={id}>
-                        {weatherName(id)} ({id})
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              <div className="notice">
+                Tekst pojawi się w nakładce „Instruktor” i na ekranie
+                stanowiska. Krótko – kierowca czyta go w trakcie jazdy.
               </div>
-              <p className="muted">
-                Pakiet pogody ustala niebo i oświetlenie. Deszcz na starcie i
-                zmiany podczas jazdy wymagają na stanowisku Custom Shaders Patch
-                z włączonym WeatherFX; bez niego stanowisko odmówi startu
-                zamiast jechać na sucho.
-              </p>
               <label>
-                Profil bazy wymagany w ćwiczeniu
-                <select
-                  value={values.profile}
-                  onChange={(e) => set("profile", e.target.value)}
-                >
-                  <option value="off">
-                    Zachowaj bieżący profil stanowiska
-                  </option>
-                  <option value="on">
-                    Zastosuj i potwierdź wskazany profil
-                  </option>
-                </select>
+                Wiadomość
+                <input
+                  required
+                  maxLength={300}
+                  autoFocus
+                  value={values.text}
+                  placeholder="np. Hamuj 20 m później w zakręcie 1"
+                  onChange={(e) => set("text", e.target.value)}
+                />
               </label>
-              {values.profile === "on" && (
-                <div className="form-grid">
-                  {field("degrees", "Zakres obrotu (°)", "number", 180, 1440)}
-                  {field("strength", "Siła (%)", "number", 0, 100)}
-                </div>
-              )}
+              <div className="quick-messages">
+                {[
+                  "Zjedź do boksu",
+                  "Ostatnie okrążenie",
+                  "Świetnie, utrzymaj tempo",
+                  "Płynniej na wyjściu z zakrętów",
+                ].map((t) => (
+                  <button
+                    type="button"
+                    key={t}
+                    className="chip"
+                    onClick={() => set("text", t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
             </>
           )}
           {modal.kind === "weather" && (
@@ -2830,6 +2844,8 @@ function RunForm({
 }) {
   const [exercise, setExercise] = useState(data.exercises[0]?.id || ""),
     [mode, setMode] = useState("individual"),
+    [race, setRace] = useState(false),
+    [raceLaps, setRaceLaps] = useState("5"),
     [rows, setRows] = useState([
       {
         trainee_id: data.trainees[0]?.id || "",
@@ -2851,6 +2867,7 @@ function RunForm({
       await onSubmit({
         exercise_id: exercise,
         mode,
+        race_laps: race ? Number(raceLaps) : null,
         participants: rows.map((r) => ({
           ...r,
           plan_item_id: r.plan_item_id || null,
@@ -2894,12 +2911,44 @@ function RunForm({
           <option value="multiplayer">Grupowa na wspólnym serwerze</option>
         </select>
       </label>
+      <div className="form-grid">
+        <label>
+          Rodzaj
+          <select
+            value={race ? "race" : "practice"}
+            onChange={(e) => setRace(e.target.value === "race")}
+          >
+            <option value="practice">Trening na czas sesji</option>
+            <option value="race">Wyścig na liczbę okrążeń</option>
+          </select>
+        </label>
+        {race && (
+          <label>
+            Liczba okrążeń
+            <input
+              type="number"
+              min={1}
+              max={200}
+              required
+              value={raceLaps}
+              onChange={(e) => setRaceLaps(e.target.value)}
+            />
+          </label>
+        )}
+      </div>
+      {race && (
+        <p className="muted">
+          Po przejechaniu zadanej liczby okrążeń stanowisko kończy sesję, a
+          panel liczy klasyfikację. W trybie grupowym bez serwera AC każdy
+          jedzie u siebie (wyścig wirtualny).
+        </p>
+      )}
       {selected && (
         <div className="session-preview">
           <Flag size={18} />
           <span>
-            {selected.car} · {selected.duration} min ·{" "}
-            {selected.conditions.air_temp}°C ·{" "}
+            {data.carNames[selected.car] ?? selected.car} · {selected.duration}{" "}
+            min · {selected.conditions.air_temp}°C ·{" "}
             {selected.conditions.rain ? "deszcz" : "sucho"}
           </span>
         </div>

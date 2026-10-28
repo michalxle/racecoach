@@ -115,6 +115,9 @@ def register_training_routes(app, db):
             row["participants"] = db.all("SELECT a.id,a.status,a.station_id,a.trainee_id,u.name AS trainee_name,s.name AS station_name FROM attempts a JOIN users u ON u.id=a.trainee_id JOIN stations s ON s.id=a.station_id WHERE a.run_id=?", (row["id"],))
             states = db.all("SELECT s.state FROM attempts a JOIN stations s ON s.id=a.station_id WHERE a.run_id=?", (row["id"],))
             row["weather_control"] = weather_control(row["mode"], [json.loads(s["state"]).get("capabilities", []) for s in states])
+            if row["scenario"].get("race_laps"):
+                from .coaching import classification
+                row["classification"] = classification(db, row["id"], row["scenario"]["race_laps"])
         return rows
 
     @app.post("/api/runs", status_code=201)
@@ -126,7 +129,8 @@ def register_training_routes(app, db):
         scenario = {"exercise_id": exercise["id"], "revision": exercise["revision"], "track_key": track["id"],
                     "track_id": track["game_id"], "layout": track["layout"], "track": track, "car": exercise["car"],
                     "conditions": json.loads(exercise["conditions"]), "duration": exercise["duration"], "mode": body.mode,
-                    "hardware_profile": json.loads(exercise["hardware_profile"]) if exercise["hardware_profile"] else None}
+                    "hardware_profile": json.loads(exercise["hardware_profile"]) if exercise["hardware_profile"] else None,
+                    "race_laps": body.race_laps}
         sources = []
         for p in body.participants:
             source = require_row(db, "stations", p.station_id)
@@ -163,7 +167,10 @@ def register_training_routes(app, db):
                 busy = c.execute("SELECT id FROM attempts WHERE (station_id=? OR trainee_id=?) AND status IN ('preparing','ready','running','stopping','attention')", (p.station_id, p.trainee_id)).fetchone()
                 if busy:
                     raise HTTPException(409, "Stanowisko lub kursant ma już aktywną próbę")
-            if body.mode == "multiplayer" and not sources[0]["simulated"]:
+            if body.mode == "multiplayer" and body.race_laps and not sources[0]["simulated"] and not app.state.server_manager.configured:
+                # Wyścig wirtualny (jak w SimTrainer): każdy jedzie u siebie, klasyfikację liczy centrala z okrążeń.
+                scenario["mode"], scenario["virtual_race"] = "individual", True
+            elif body.mode == "multiplayer" and not sources[0]["simulated"]:
                 other = c.execute("SELECT r.id FROM runs r JOIN attempts a ON a.run_id=r.id JOIN stations s ON s.id=a.station_id WHERE r.mode='multiplayer' AND s.simulated=0 AND r.status NOT IN ('completed','interrupted') LIMIT 1").fetchone()
                 if other:
                     raise HTTPException(409, "Zarządzany serwer ma już aktywną lub nieuzgodnioną sesję grupową")
@@ -193,8 +200,11 @@ def register_training_routes(app, db):
                 if not source["last_seen"] or time.time() - source["last_seen"] > 12:
                     raise HTTPException(409, "Uczestnik utracił połączenie")
             scenario = json.loads(run["scenario"])
+            exercise = require_row(db, "exercises", run["exercise_id"])
+            from .coaching import coach_payload
             for p in participants:
-                enqueue(c, p["station_id"], "start_session", {"run_id": run_id, "attempt_id": p["id"], "scenario": scenario}, ttl=120)
+                enqueue(c, p["station_id"], "start_session", {"run_id": run_id, "attempt_id": p["id"], "scenario": scenario,
+                                                              "coach": coach_payload(db, p, run, exercise)}, ttl=120)
             c.execute("UPDATE runs SET status='starting' WHERE id=?", (run_id,))
             db.audit(actor["id"], "run.start", run_id, conn=c)
         return {"ok": True}

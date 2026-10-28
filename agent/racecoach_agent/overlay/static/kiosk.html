@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RaceCoach – stanowisko</title>
+<style>
+  :root { --accent: #e77942; --green: #3dd68c; --red: #ff6b6b; --muted: #9aa1ab; --mono: "Cascadia Mono", Consolas, ui-monospace, monospace; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0e1013; color: #f2f4f6; font-family: "Segoe UI", "DM Sans", system-ui, sans-serif; }
+  body { display: grid; grid-template-rows: auto 1fr auto; gap: 2vh; padding: 3vh 3vw; }
+  header { display: flex; justify-content: space-between; align-items: flex-end; gap: 2vw; flex-wrap: wrap; }
+  .eyebrow { color: var(--accent); font-weight: 700; letter-spacing: .12em; font-size: clamp(12px, 1.4vh, 18px); text-transform: uppercase; }
+  h1 { margin: .4vh 0 0; font-size: clamp(28px, 6vh, 72px); line-height: 1.05; }
+  .sub { color: var(--muted); font-size: clamp(14px, 2.2vh, 26px); margin-top: .6vh; }
+  .state { font-size: clamp(14px, 2.2vh, 26px); padding: .6vh 1.2vw; border-radius: 999px; background: #1f232a; }
+  main { display: grid; grid-template-columns: 1.3fr 1fr; gap: 2vw; min-height: 0; }
+  .card { background: #171a1f; border-radius: 16px; padding: 2.5vh 2vw; min-height: 0; }
+  .k { color: var(--muted); font-size: clamp(12px, 1.8vh, 20px); text-transform: uppercase; letter-spacing: .08em; }
+  .big { font-family: var(--mono); font-weight: 700; font-size: clamp(48px, 13vh, 170px); line-height: 1; margin: 1vh 0 2vh; }
+  .delta { font-family: var(--mono); font-weight: 700; font-size: clamp(32px, 7vh, 90px); }
+  .delta.neg { color: var(--green); } .delta.pos { color: var(--red); }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5vw; margin-top: 2vh; }
+  .grid .v { font-family: var(--mono); font-size: clamp(20px, 4vh, 52px); font-weight: 600; }
+  .side { display: flex; flex-direction: column; gap: 2vh; min-height: 0; }
+  .msg { font-size: clamp(18px, 3.4vh, 40px); line-height: 1.3; }
+  .msg.fresh { color: var(--accent); }
+  .tips { font-size: clamp(15px, 2.4vh, 28px); line-height: 1.35; display: flex; flex-direction: column; gap: 1.2vh; }
+  .tip { display: flex; gap: 1vw; } .tip b { color: var(--accent); flex: none; }
+  footer { color: var(--muted); font-size: clamp(12px, 1.6vh, 18px); display: flex; justify-content: space-between; }
+  .idle main { opacity: .45; }
+</style>
+</head>
+<body class="idle">
+<header>
+  <div>
+    <div class="eyebrow" id="eyebrow">RaceCoach</div>
+    <h1 id="driver">Stanowisko gotowe</h1>
+    <div class="sub" id="combo">Czekam na sesję od instruktora…</div>
+  </div>
+  <div class="state" id="state">bez sesji</div>
+</header>
+<main>
+  <section class="card">
+    <div class="k" id="lap">Okrążenie –</div>
+    <div class="big" id="cur">0:00.0</div>
+    <div class="k">Delta do wzorca <span id="vs"></span></div>
+    <div class="delta" id="delta">—</div>
+    <div class="grid">
+      <div><div class="k">Ostatnie</div><div class="v" id="last">—</div></div>
+      <div><div class="k">Najlepsze</div><div class="v" id="best">—</div></div>
+      <div><div class="k">Rekord</div><div class="v" id="pb">—</div></div>
+    </div>
+  </section>
+  <section class="side">
+    <div class="card"><div class="k">Cel</div><div class="msg" id="goal">—</div></div>
+    <div class="card"><div class="k">Instruktor</div><div class="msg" id="msg">Brak wiadomości.</div></div>
+    <div class="card" style="flex:1;overflow:auto"><div class="k" id="tips-k">Wskazówki</div><div class="tips" id="tips">Pojawią się po okrążeniu.</div></div>
+  </section>
+</main>
+<footer><span>RaceCoach – ekran stanowiska</span><span id="clock"></span></footer>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = (ms) => !ms || ms <= 0 ? '—' : `${Math.floor(ms / 60000)}:${String(Math.floor(ms % 60000 / 1000)).padStart(2, '0')}.${String(Math.floor(ms % 1000)).padStart(3, '0')}`;
+const run = (ms) => !ms || ms <= 0 ? '0:00.0' : `${Math.floor(ms / 60000)}:${String(Math.floor(ms % 60000 / 1000)).padStart(2, '0')}.${Math.floor(ms % 1000 / 100)}`;
+const names = { on_track: 'na torze', in_pit: 'w boksie', paused: 'pauza', launching: 'uruchamianie gry' };
+let msgId = null;
+async function tick() {
+  try {
+    const st = await (await fetch('state', { cache: 'no-store' })).json();
+    const s = st.session || {}, lv = st.live || {};
+    document.body.classList.toggle('idle', !st.active);
+    $('#driver').textContent = st.active ? (s.trainee || 'Kursant') : 'Stanowisko gotowe';
+    $('#eyebrow').textContent = st.active ? (s.exercise || 'Sesja treningowa') : 'RaceCoach';
+    $('#combo').textContent = st.active ? [s.track, s.car].filter(Boolean).join(' · ') : 'Czekam na sesję od instruktora…';
+    $('#state').textContent = st.active ? (names[st.state] || st.state) : 'bez sesji';
+    const race = st.race;
+    const lapNo = (lv.lap_no || 0) + 1;
+    $('#lap').textContent = race && race.laps ? `Wyścig · okrążenie ${Math.min(lapNo, race.laps)}/${race.laps}${race.done ? ' · META' : ''}` : `Okrążenie ${lapNo}`;
+    $('#cur').textContent = st.state === 'on_track' || st.state === 'in_pit' ? run(lv.current_ms) : '—';
+    const d = lv.delta_ms;
+    $('#delta').textContent = d == null ? '—' : `${d >= 0 ? '+' : '−'}${(Math.abs(d) / 1000).toFixed(2)}`;
+    $('#delta').className = `delta ${d == null ? '' : d < 0 ? 'neg' : 'pos'}`;
+    $('#vs').textContent = st.ref ? `(${st.ref.label})` : '';
+    $('#last').textContent = fmt(lv.last_ms);
+    $('#last').style.color = lv.last_ms && lv.last_valid === false ? 'var(--red)' : '';
+    $('#best').textContent = fmt(lv.best_ms);
+    $('#pb').textContent = fmt(st.pb_ms);
+    $('#goal').textContent = s.goal || s.plan_item || '—';
+    const m = st.message;
+    $('#msg').textContent = m ? m.text : 'Brak wiadomości.';
+    if (m && m.id !== msgId) { msgId = m.id; $('#msg').classList.add('fresh'); setTimeout(() => $('#msg').classList.remove('fresh'), 10000); }
+    const t = st.tips;
+    if (t) {
+      $('#tips-k').textContent = `Wskazówki po okrążeniu ${t.lap_no}`;
+      $('#tips').innerHTML = `<div>${esc(t.summary)}</div>` + (t.lines || []).map((l) => `<div class="tip"><b>Z${l.corner}</b><span>${esc(l.text.replace(/^Zakręt \d+, /, ''))}</span></div>`).join('');
+    }
+  } catch (_) { /* agent restartuje się */ }
+  $('#clock').textContent = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+  setTimeout(tick, 150);
+}
+tick();
+</script>
+</body>
+</html>

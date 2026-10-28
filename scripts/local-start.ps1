@@ -12,6 +12,8 @@
 .EXAMPLE
   .\scripts\local-start.ps1 -GameDir "D:\SteamLibrary\steamapps\common\assettocorsa"
 .EXAMPLE
+  .\scripts\local-start.ps1 -Kiosk -NoOverlayWindow
+.EXAMPLE
   .\scripts\local-start.ps1 -Hardware openffboard -DDControl "C:\sim_soft\wheel-control" -MaxStrength 25
 #>
 param(
@@ -26,7 +28,9 @@ param(
     [switch]$NoAgent,
     [switch]$NoBrowser,
     [switch]$Rebuild,
-    [switch]$NewStation
+    [switch]$NewStation,
+    [switch]$NoOverlayWindow,
+    [switch]$Kiosk
 )
 . (Join-Path $PSScriptRoot "local-common.ps1")
 $Host.UI.RawUI.WindowTitle = "RaceCoach - uruchamianie"
@@ -34,6 +38,20 @@ Set-Location $Root
 
 Initialize-RaceCoach
 Build-Panel -Force:$Rebuild
+
+# Okno nakładek nad grą korzysta z PySide6 (przeglądarka Qt). Bez niego działają aplikacje RaceCoach w grze.
+if (-not $NoAgent -and -not $NoOverlayWindow) {
+    $ErrorActionPreference = "Continue"
+    & $Python -c "import PySide6.QtWebEngineWidgets" 2>$null
+    $hasQt = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = "Stop"
+    if (-not $hasQt) {
+        Write-Step "Instalacja okna nakładek nad grą (PySide6, jednorazowo ok. 300 MB)"
+        & $Python -m pip install --disable-pip-version-check -q "PySide6>=6.6"
+        if ($LASTEXITCODE -ne 0) { Write-Warn "Nie udało się zainstalować PySide6 - nakładki pokażą się jako aplikacje RaceCoach w grze." }
+        else { Write-Ok "Okno nakładek gotowe" }
+    }
+}
 
 $config = Read-LocalConfig
 $baseUrl = "http://127.0.0.1:$Port"
@@ -111,6 +129,8 @@ if (-not $NoAgent) {
     } else {
         $agentArgs = "--server $(Quote-PS $baseUrl) --game-dir $(Quote-PS $GameDir) --documents $(Quote-PS $Documents)"
         if ($Hardware -ne "off") { $agentArgs += " --hardware $Hardware --ddcontrol $(Quote-PS $DDControl) --max-strength $MaxStrength" }
+        if ($NoOverlayWindow) { $agentArgs += " --no-overlay-window" }
+        if ($Kiosk) { $agentArgs += " --kiosk" }
         $command = @"
 `$Host.UI.RawUI.WindowTitle = 'RaceCoach - AGENT stanowiska  (Ctrl+C zatrzymuje i przywraca konfigurację AC)'
 Set-Location -LiteralPath $(Quote-PS $Root)
@@ -143,8 +163,9 @@ Write-Host "  Login:  $($panel.Email)"
 Write-Host "  Hasło:  $($panel.Password)"
 if ($Lan) { Write-Host "  Z innych komputerów: http://<adres-IP-tego-komputera>:$Port (zezwól na port w zaporze)" }
 Write-Host ""
-Write-Host "  Pierwszy raz? Uruchom PRZYGOTUJ-SCENARIUSZ.bat - zaimportuje tor i auto z Twojej gry,"
-Write-Host "  utworzy ćwiczenie i konto kursanta testowego. Potem w panelu: Stanowiska -> Przygotuj sesję -> Start."
+Write-Host "  Scenariusz: Scenariusze -> Nowy scenariusz (tor i auto z listy gry, mapa pobiera się sama)."
+Write-Host "  Sesja: Stanowiska -> Przygotuj sesję -> Start. Nakładki w grze startują razem z sesją."
+Write-Host "  Układ nakładek: Stanowiska -> Nakładki. Ekran kierowcy: http://127.0.0.1:31399/kiosk"
 Write-Host ""
 Write-Host "  Okna CENTRALA i AGENT muszą pozostać otwarte. Kończ pracę Ctrl+C - najpierw AGENT, potem CENTRALA."
 Write-Host "==========================================================" -ForegroundColor Green

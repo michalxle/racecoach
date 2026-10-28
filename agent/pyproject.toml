@@ -10,6 +10,7 @@ dependencies = ["httpx>=0.27,<1"]
 
 [project.optional-dependencies]
 hardware = ["pyserial>=3.5", "hidapi>=0.14"]
+overlay = ["PySide6>=6.6"]
 
 [project.scripts]
 racecoach-agent = "racecoach_agent.__main__:main"
@@ -18,4 +19,4 @@ racecoach-agent = "racecoach_agent.__main__:main"
 where = ["."]
 
 [tool.setuptools.package-data]
-racecoach_agent = ["csp/racecoach/*"]
+racecoach_agent = ["csp/racecoach/*", "overlay/static/*", "acapps/*/*.py"]

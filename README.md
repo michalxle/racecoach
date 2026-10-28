@@ -67,6 +67,14 @@ potrzebny jest własny reverse proxy HTTPS i `RACECOACH_SECURE_COOKIES=1`.
 - Adapter Windows: konfiguracja/start `acs.exe`, odczyt pamięci AC, lokalna kolejka offline.
 - Adapter bazy DD: ponowne wykorzystanie sterowników OpenFFBoard / FFBeast z `wheel-control`.
 - Generowanie konfiguracji i uruchamianie osobnej instalacji serwera AC do sesji grupowych.
+- Kreator scenariusza z listami z wyszukiwaniem: auta, tory z wariantami i pogoda z gry stanowiska
+  (nazwy z plików gry); mapa toru eksportowana automatycznie przez agenta.
+- Trener na stanowisku (przeniesiony z SimTrainer): okrążenia z ważnością, delta na żywo do wzorca
+  (wzorzec ćwiczenia → rekord kursanta → najlepsze w sesji), wskazówki po okrążeniu dla zakrętów.
+- Nakładki w grze: okno nad grą (PySide6) albo aplikacje RaceCoach w AC; układ ustawiany w panelu;
+  ekran kierowcy (kiosk); wiadomości instruktora.
+- Wyścig na liczbę okrążeń z klasyfikacją (na serwerze AC albo wirtualny), rankingi auto+tor,
+  rekordy osobiste, postęp i osiągnięcia. Opis: [URUCHOMIENIE-LOKALNE.md](URUCHOMIENIE-LOKALNE.md).
 
 Panel odświeża podgląd co 1,5 s, a agent komunikuje się z centralą przez HTTP co około sekundę.
 Osobny wątek agenta odczytuje grę do 100 razy/s i zapisuje tylko nowe pakiety fizyki.

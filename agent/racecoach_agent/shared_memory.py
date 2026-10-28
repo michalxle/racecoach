@@ -90,6 +90,7 @@ class ACReader:
         self.lap = None
         self.completed_time = 0
         self.seq = 0
+        self.physics = self.graphics = None
         self.last_current_ms = None
         self.boundary_skips = 0
 
@@ -114,6 +115,7 @@ class ACReader:
     def read(self):
         self.connect()
         physics, graphics = self.maps[0].read(), self.maps[1].read()
+        self.physics, self.graphics = physics, graphics  # pełny odczyt dla trenera (okrążenia, delta)
         if graphics.status != 2:  # OFF=0, REPLAY=1, LIVE=2, PAUSE=3
             return None, "paused" if graphics.status == 3 else "idle"
         if physics.packet_id == self.last_packet:

@@ -79,6 +79,13 @@ CREATE TABLE IF NOT EXISTS audit (
  id TEXT PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL,
  detail TEXT NOT NULL, created REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS laps (
+ attempt_id TEXT NOT NULL REFERENCES attempts(id), lap_no INTEGER NOT NULL, lap INTEGER NOT NULL,
+ time_ms INTEGER NOT NULL, valid INTEGER NOT NULL, offtracks INTEGER NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '',
+ tips TEXT NOT NULL DEFAULT '{}', trace TEXT, created REAL NOT NULL,
+ PRIMARY KEY(attempt_id,lap_no)
+);
+CREATE INDEX IF NOT EXISTS laps_valid ON laps(valid,time_ms);
 CREATE TABLE IF NOT EXISTS exercise_references (
  exercise_id TEXT PRIMARY KEY REFERENCES exercises(id), attempt_id TEXT NOT NULL REFERENCES attempts(id),
  lap INTEGER NOT NULL, actor TEXT NOT NULL REFERENCES users(id), updated REAL NOT NULL
@@ -103,7 +110,11 @@ class Database:
                 self.connection.execute("UPDATE tracks SET game_id=id")
             if "hardware_profile" not in {row[1] for row in self.connection.execute("PRAGMA table_info(exercises)")}:
                 self.connection.execute("ALTER TABLE exercises ADD COLUMN hardware_profile TEXT")
-            self.connection.execute("PRAGMA user_version=4")
+            station_columns = {row[1] for row in self.connection.execute("PRAGMA table_info(stations)")}
+            for column in ("content", "overlay"):
+                if column not in station_columns:
+                    self.connection.execute(f"ALTER TABLE stations ADD COLUMN {column} TEXT NOT NULL DEFAULT '{{}}'")
+            self.connection.execute("PRAGMA user_version=5")
             self.connection.commit()
 
     @contextmanager

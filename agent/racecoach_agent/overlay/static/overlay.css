@@ -1,0 +1,71 @@
+/* Nakładki RaceCoach: okno nad grą, podgląd i edytor układu w panelu, drugi monitor / OBS. */
+:root {
+  --accent: #e77942;
+  --accent-ink: #1d0f07;
+  --green: #3dd68c;
+  --red: #ff6b6b;
+  --muted: #9aa1ab;
+  --border: #2a2f37;
+  --font: "Segoe UI", "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "JetBrains Mono", ui-monospace, monospace;
+}
+html, body { margin: 0; height: 100%; overflow: hidden; background: #20252c; color: #f2f4f6; font-family: var(--font); font-size: 14px; }
+body.transparent, html.transparent { background: transparent; }
+.mono { font-family: var(--font-mono); }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+#scene { position: fixed; inset: 0; }
+#scene svg { width: 100%; height: 100%; display: block; }
+#scene .scene-label { position: absolute; left: 0; right: 0; top: 30%; text-align: center; color: #c9d2dc; font-size: 14px; }
+body:not(.scene) #scene { display: none; }
+
+#bar { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; flex-wrap: wrap;
+  gap: 10px 16px; align-items: center; max-width: calc(100% - 32px); padding: 10px 14px; border-radius: 12px;
+  background: rgba(19, 22, 26, .94); border: 1px solid var(--border); transition: opacity .3s; }
+#bar.hidden { opacity: 0; pointer-events: none; }
+.bar-group { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.tgl { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; min-height: 32px; }
+.tgl input { width: 16px; height: 16px; accent-color: var(--accent); }
+.btn { min-height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #3a404a; background: #262b33; color: #f2f4f6; cursor: pointer; font: inherit; }
+.btn:hover { border-color: var(--accent); }
+
+.widget { position: absolute; transform: scale(var(--k, 1)); transform-origin: 0 0; background: rgba(10, 12, 15, .84);
+  border-radius: 12px; padding: 12px 14px; color: #f2f4f6; cursor: grab; user-select: none; touch-action: none;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .35); }
+body.game #bar { display: none; }
+body.game .widget { cursor: default; pointer-events: none; }
+.widget.dragging { cursor: grabbing; outline: 2px solid var(--accent); }
+.widget[hidden] { display: none; }
+.w-title { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; letter-spacing: .8px;
+  color: #aeb4bd; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; }
+.w-title.accent { color: var(--accent); }
+
+#w-delta { width: 230px; }
+.delta-num { font-family: var(--font-mono); font-weight: 700; font-size: 40px; line-height: 1.1; text-align: center; }
+.delta-num.neg { color: var(--green); }
+.delta-num.pos { color: var(--red); }
+.delta-bar { position: relative; height: 10px; border-radius: 5px; background: #2a2f37; margin-top: 8px; overflow: hidden; }
+.delta-bar i { position: absolute; top: 0; bottom: 0; }
+.delta-bar .mid { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 2px; background: #c4c9d0; }
+
+#w-times { width: 250px; }
+.t-cur { font-weight: 700; font-size: 32px; }
+.t-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 6px; font-size: 13px; }
+.t-grid .k { color: #aeb4bd; font-size: 11px; }
+.t-grid .best { color: #c792ff; }
+
+#w-map { padding: 8px; }
+#w-map canvas { display: block; width: 240px; height: 240px; }
+
+#w-tips { width: 340px; }
+#w-tips.fresh, #w-msg.fresh { outline: 2px solid var(--accent); }
+.tips-body { display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 1.4; }
+.tips-sum { color: #c4c9d0; font-size: 13px; }
+.tip { display: flex; gap: 10px; align-items: flex-start; }
+.tip .num { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-ink);
+  font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+
+#w-msg { width: 320px; }
+.msg-goal { font-size: 13px; color: #c4c9d0; }
+.msg-text { font-size: 17px; line-height: 1.4; margin-top: 4px; }
+.msg-text:empty, .msg-goal:empty { display: none; }

@@ -70,7 +70,7 @@ def seed(db):
             conditions = {"weather": "3_clear", "air_temp": 22, "road_temp": 29, "grip": 1, "rain": rain, "time": "13:00"}
             c.execute("INSERT INTO exercises(id,title,track_id,car,conditions,duration,mode,revision) VALUES (?,?,?,?,?,?,?,?)", (key, title, "demo-loop", "training_gt", dump(conditions), 15, mode, 1))
         for key, name in [("demo-01", "Stanowisko 01"), ("demo-02", "Stanowisko 02")]:
-            c.execute("INSERT INTO stations VALUES (?,?,?,?,?,?,?)", (key, name, digest("internal-demo-" + key), 1, now, now, dump(station_state())))
+            c.execute("INSERT INTO stations(id,name,token_hash,simulated,created,last_seen,state) VALUES (?,?,?,?,?,?,?)", (key, name, digest("internal-demo-" + key), 1, now, now, dump(station_state())))
         for student in ("anna", "piotr", "lena"):
             c.execute("INSERT INTO plans VALUES (?,?,?,?)", ("plan-" + student, student, "Fundamenty techniki jazdy", now))
             for i, (exercise, title, goal) in enumerate([("braking", "Kontrola hamowania", "Powtarzalny punkt hamowania i płynne zwalnianie pedału."),
