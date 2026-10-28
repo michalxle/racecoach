@@ -94,6 +94,11 @@ class Database:
         self.lock = threading.RLock()
         with self.lock:
             self.connection.executescript(SCHEMA)
+            if "game_id" not in {row[1] for row in self.connection.execute("PRAGMA table_info(tracks)")}:
+                self.connection.execute("ALTER TABLE tracks ADD COLUMN game_id TEXT")
+                self.connection.execute("UPDATE tracks SET game_id=id")
+                self.connection.execute("PRAGMA user_version=2")
+                self.connection.commit()
 
     @contextmanager
     def transaction(self):

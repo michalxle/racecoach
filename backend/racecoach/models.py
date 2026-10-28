@@ -170,6 +170,7 @@ class Section(Model):
 
 class TrackCreate(Model):
     id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.-]+$")
+    game_id: str | None = Field(default=None, max_length=100, pattern=r"^[A-Za-z0-9_.-]+$")
     name: str = Field(min_length=2, max_length=150)
     layout: str = Field(default="", max_length=100, pattern=r"^[A-Za-z0-9_.-]*$")
     length: float = Field(gt=10, lt=1000000)

@@ -84,12 +84,15 @@ def create_app(data_dir: str | Path | None = None, demo=False, bootstrap_admin=T
                 await task
             except asyncio.CancelledError:
                 pass
+        app.state.server_manager.stop()
         db.close()
 
     app = FastAPI(title="RaceCoach", version="0.1.0", lifespan=lifespan)
     app.state.db = db
     app.state.demo = demo
     app.state.data_dir = data_dir
+    from .server_manager import ServerManager
+    app.state.server_manager = ServerManager(data_dir)
 
     @app.middleware("http")
     async def security_headers(request, call_next):

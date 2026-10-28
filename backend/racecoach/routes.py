@@ -42,6 +42,9 @@ def register_routes(app, db):
         apply_command_result(db, source["id"], command_id, body.status, body.result)
         return {"ok": True}
 
+    from .training import register_training_routes
+    register_training_routes(app, db)
+
 
 def apply_command_result(db, station_id, command_id, status, result):
     with db.transaction() as c:
