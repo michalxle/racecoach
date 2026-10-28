@@ -59,6 +59,40 @@ Wszystkie pokazane przejazdy są syntetyczne i mają oznaczenie demo.
 Tych prób nie wykonano na macOS. Adaptery nie powinny być traktowane jako zwalidowane
 na fizycznym zestawie ani jako gotowy produkt do eksploatacji bez odbioru stanowiska.
 
+## Protokół odbioru fizycznego stanowiska
+
+Wypełnij osobno dla każdego zestawu. Procedura wykonania:
+[README — pierwsza integracja](../README.md#pierwsza-integracja-z-rzeczywistym-stanowiskiem).
+Ten formularz nie oznacza, że odbiór został już wykonany.
+
+| Środowisko | Wartość |
+| --- | --- |
+| Data, osoba wykonująca, identyfikator stanowiska | Do uzupełnienia |
+| Commit RaceCoach i commit osobnego `wheel-control` | Do uzupełnienia |
+| Windows / Python / AC / CSP / kontroler pogody i wersje | Do uzupełnienia |
+| Model bazy / firmware / połączenie USB / kontrolery | Do uzupełnienia |
+| Lokalny limit siły, limity sterownika i profil DD | Do uzupełnienia |
+| Tor / layout / auto / wersja pakietu geometrii | Do uzupełnienia |
+| Scenariusz / próba / okrążenie i wzorzec | Do uzupełnienia |
+
+| Sprawdzenie | Wynik i uwagi |
+| --- | --- |
+| Połączenie agenta, brak oznaczenia demo, odczyt katalogu | Niewykonane |
+| Przygotowanie, start i potwierdzona tożsamość gry | Niewykonane |
+| Odczyt profilu DD po zmianie i odczyt osi/przycisków | Niewykonane |
+| Co najmniej dwa pełne okrążenia, czas AC a RaceCoach | Niewykonane |
+| Zgodność mapy i granic każdej sekcji z przejazdem | Niewykonane |
+| Porównanie własnych prób i wskazanego wzorca | Niewykonane |
+| Notatka, decyzja i widok planu kursanta | Niewykonane |
+| Zakończenie, wysłanie danych, przywrócenie konfiguracji | Niewykonane |
+| Utrata i powrót sieci, USB oraz restart agenta | Niewykonane |
+| Dwa stanowiska: Practice i osobne wyniki | Niewykonane |
+| Pogoda początkowa; osobno CSP/deszcz, jeżeli wdrożono | Niewykonane |
+
+Zamiast danych osobowych i tokenów zapisuj identyfikatory techniczne; pełne protokoły z danymi
+kursantów przechowuj poza repozytorium. Przy niepowodzeniu dołącz komunikat z dziennika poleceń
+bez sekretów oraz opisz oczekiwane i zaobserwowane działanie.
+
 ## Świadome granice MVP
 
 - Jeden proces centrali na folder danych; SQLite WAL, HTTP polling, jedna zarządzana instancja serwera grupowego.

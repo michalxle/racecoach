@@ -1,5 +1,9 @@
 # Stanowisko Windows i integracja Assetto Corsa
 
+Pełna procedura od uruchomienia centrali do oceny rzeczywistego przejazdu znajduje się w
+[README — pierwsza integracja](../README.md#pierwsza-integracja-z-rzeczywistym-stanowiskiem).
+Poniżej opisano szczegóły i ograniczenia adapterów.
+
 ## Agent
 
 Na stanowisku: Windows, Python 3.12, Steam oraz oryginalne Assetto Corsa 64-bit.
@@ -39,6 +43,7 @@ Przy obecnym układzie katalogów wskaż sąsiedni projekt `wheel-control`:
 .venv\Scripts\python.exe -m racecoach_agent `
   --server http://192.168.1.10:8000 `
   --game-dir "C:\Steam\steamapps\common\assettocorsa" `
+  --documents "C:\Users\kursant\Documents\Assetto Corsa" `
   --hardware openffboard `
   --ddcontrol "C:\sim_soft\wheel-control" `
   --max-strength 25
@@ -149,8 +154,10 @@ Po awarii z pozostawioną kopią `race.ini` zamknij grę i przywróć konfigurac
 ```powershell
 .venv\Scripts\python.exe -m racecoach_agent `
   --server http://192.168.1.10:8000 --game-dir "C:\Steam\steamapps\common\assettocorsa" `
+  --documents "C:\Users\kursant\Documents\Assetto Corsa" `
   --restore-config
 ```
 
+Podaj ten sam `--documents` oraz, jeśli był zmieniony, ten sam `--data`, co przy nagrywaniu.
 Przy zwykłym wyłączeniu agenta program kończy własny proces gry i przywraca konfigurację.
 Nie zabija gry uruchomionej niezależnie przez użytkownika.
