@@ -72,7 +72,7 @@ Wniosek projektowy: dane wystarczają do mapy pozycji, wykresów wejść i poró
 
 Aktualny `OpenFFBoardLink._poll` odczytuje `axis.curpos` i `axis.curtorque`, po czym skaluje i ogranicza wynik do `LiveState`. Jest to sygnał raportowany przez sterownik; nie należy przedstawiać go jako zmierzonego momentu na dłoniach w Nm. `MotorXDrive` oferuje osobno prąd `iq`; przeliczenie na moment wymaga zweryfikowanego modelu i kalibracji. Podobnie znormalizowany hamulec nie jest pomiarem siły nacisku w niutonach.
 
-Kod lokalny: [odczyt bazy](../ddcontrol/openffboard/driver.py), [model stanu](../ddcontrol/core.py), [wejścia kontrolerów](../ddcontrol/gamepads.py).
+Kod lokalny: [odczyt bazy](../../wheel-control/ddcontrol/openffboard/driver.py), [model stanu](../../wheel-control/ddcontrol/core.py), [wejścia kontrolerów](../../wheel-control/ddcontrol/gamepads.py).
 
 ### Częstotliwość i spójność
 

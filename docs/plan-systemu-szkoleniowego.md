@@ -2,7 +2,7 @@
 
 Data: 28 października 2026 r.
 
-Status: propozycja architektury i zakresu prac; opisane moduły centralne nie są jeszcze zaimplementowane.
+Status: historyczny dokument założeń sprzed implementacji. Aktualny stan MVP opisuje README repozytorium RaceCoach.
 
 Uzupełnienie: [szczegółowa analiza integracji Assetto Corsa](analiza-integracji-assetto-corsa.md) obejmuje sterowanie zewnętrzne, pogodę runtime, źródła map torów oraz porównania sekcji i przejazdów referencyjnych.
 
@@ -27,7 +27,7 @@ Plan dotyczy oryginalnego Assetto Corsa. Integracja z Assetto Corsa Competizione
 | Firmware XDrive | Własny target STM32F405 i sterownik `MotorXDrive` | Lokalna obsługa FFB i parametrów silnika |
 | System szkoleniowy | Brak serwera, agentów sieciowych, historii kursantów i integracji gry | Nowa część projektu |
 
-Podstawa: [README DD Control](../README.md), [warstwa sprzętowa](../ddcontrol/core.py), [most GUI](../ddcontrol/backend.py), [wejścia kontrolerów](../ddcontrol/gamepads.py).
+Podstawa: [README DD Control](../../wheel-control/README.md), [warstwa sprzętowa](../../wheel-control/ddcontrol/core.py), [most GUI](../../wheel-control/ddcontrol/backend.py), [wejścia kontrolerów](../../wheel-control/ddcontrol/gamepads.py).
 
 Dokumentacja aplikacji nadal wymaga walidacji na fizycznym sprzęcie; README targetu XDrive zawiera informację o braku uruchomienia na rzeczywistej płytce. Gotowość protokołów do pracy zdalnej należy potwierdzić pomiarami i testem stanowiska.
 
