@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="pl">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RaceCoach · lokalny test responsywności</title>
+  <style>
+    body {
+      margin: 20px;
+      font: 14px system-ui;
+      background: #e8edf1;
+      color: #344b5e;
+    }
+    label {
+      display: block;
+      margin-bottom: 14px;
+    }
+    select {
+      padding: 7px;
+    }
+    iframe {
+      display: block;
+      border: 1px solid #c4cfd8;
+      background: white;
+      height: 1150px;
+      width: 375px;
+      max-width: 100%;
+      margin-top: 15px;
+    }
+  </style>
+  <label
+    >Szerokość panelu
+    <select id="width">
+      <option>375</option>
+      <option>320</option>
+      <option>768</option>
+      <option>1024</option>
+    </select>
+    px</label
+  >
+  <iframe
+    id="panel"
+    src="/"
+    title="Panel RaceCoach w wybranej szerokości"
+  ></iframe>
+  <script>
+    document
+      .getElementById("width")
+      .addEventListener(
+        "change",
+        (e) =>
+          (document.getElementById("panel").style.width =
+            e.target.value + "px"),
+      );
+  </script>
+</html>
