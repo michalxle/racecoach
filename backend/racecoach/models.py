@@ -64,6 +64,16 @@ class Conditions(Model):
     time: str = Field(default="13:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
+class HardwareProfile(Model):
+    degrees: int = Field(ge=180, le=1440)
+    strength: int = Field(ge=0, le=100)
+
+
+class ExerciseReference(Model):
+    attempt_id: str
+    lap: int = Field(ge=0)
+
+
 class ExerciseCreate(Model):
     title: str = Field(min_length=2, max_length=150)
     track_id: str
@@ -71,6 +81,7 @@ class ExerciseCreate(Model):
     conditions: Conditions = Field(default_factory=Conditions)
     duration: int = Field(default=15, ge=1, le=180)
     mode: Literal["individual", "multiplayer", "either"] = "either"
+    hardware_profile: HardwareProfile | None = None
 
 
 class StationCreate(Model):
@@ -189,11 +200,6 @@ class TrackCreate(Model):
             if b.start < a.end:
                 raise ValueError("Sekcje nie mogą się nakładać")
         return self
-
-
-class HardwareProfile(Model):
-    degrees: int = Field(ge=180, le=1440)
-    strength: int = Field(ge=0, le=100)
 
 
 class WeatherChange(Model):

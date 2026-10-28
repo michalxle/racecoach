@@ -78,7 +78,10 @@ CREATE TABLE IF NOT EXISTS audit (
  id TEXT PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL,
  detail TEXT NOT NULL, created REAL NOT NULL
 );
-PRAGMA user_version=1;
+CREATE TABLE IF NOT EXISTS exercise_references (
+ exercise_id TEXT PRIMARY KEY REFERENCES exercises(id), attempt_id TEXT NOT NULL REFERENCES attempts(id),
+ lap INTEGER NOT NULL, actor TEXT NOT NULL REFERENCES users(id), updated REAL NOT NULL
+);
 """
 
 
@@ -97,8 +100,10 @@ class Database:
             if "game_id" not in {row[1] for row in self.connection.execute("PRAGMA table_info(tracks)")}:
                 self.connection.execute("ALTER TABLE tracks ADD COLUMN game_id TEXT")
                 self.connection.execute("UPDATE tracks SET game_id=id")
-                self.connection.execute("PRAGMA user_version=2")
-                self.connection.commit()
+            if "hardware_profile" not in {row[1] for row in self.connection.execute("PRAGMA table_info(exercises)")}:
+                self.connection.execute("ALTER TABLE exercises ADD COLUMN hardware_profile TEXT")
+            self.connection.execute("PRAGMA user_version=3")
+            self.connection.commit()
 
     @contextmanager
     def transaction(self):

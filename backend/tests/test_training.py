@@ -53,14 +53,15 @@ def test_plan_assignment_and_role_boundaries(logged):
     c.post("/api/auth/logout")
     c.post("/api/auth/login", json={"email": "anna@demo.local", "password": "Trening2026!"})
     assert all(p["trainee_id"] == "anna" for p in c.get("/api/plans").json())
-    assert c.get("/api/attempts/seed-attempt-0/export").status_code == 403
+    assert c.get("/api/attempts/seed-attempt-3/export").status_code == 403
+    assert c.get("/api/attempts/seed-attempt-0/export").status_code == 200  # explicitly shared reference
     assert c.post("/api/attempts/seed-attempt-2/review", json={"note": "x"}).status_code == 403
 
 
 def test_telemetry_retry_and_station_ownership(logged):
     c = setup(logged)
     original = c.get("/api/attempts/seed-attempt-0/export").json()["samples"][:5]
-    batch = {"chunk_id": "retry", "samples": [{**p, "seq": p["seq"] + 2000} for p in original]}
+    batch = {"chunk_id": "retry", "samples": [{**p, "seq": p["seq"] + 2000, "t": p["t"] + 200} for p in original]}
     url = "/api/agent/attempts/seed-attempt-0/telemetry"
     assert c.post(url, headers=auth(2), json=batch).status_code == 403
     first = c.post(url, headers=auth(1), json=batch)
@@ -71,6 +72,45 @@ def test_telemetry_retry_and_station_ownership(logged):
     assert c.post(url, headers=auth(1), json=batch).status_code == 409
     batch["chunk_id"] = "overlap"
     assert c.post(url, headers=auth(1), json=batch).status_code == 409
+
+
+def test_timeout_preserves_station_reservation_until_confirmed_stop(logged):
+    from racecoach.routes import expire_commands
+    c = setup(logged)
+    request = {"exercise_id": "braking", "mode": "individual", "participants": [{"trainee_id": "anna", "station_id": "demo-01", "plan_item_id": "anna-0"}]}
+    run = c.post("/api/runs", json=request).json()["id"]
+    db = c.app.state.db
+    with db.transaction() as conn:
+        conn.execute("UPDATE commands SET expires=0 WHERE json_extract(payload,'$.run_id')=?", (run,))
+    expire_commands(db)
+    assert db.one("SELECT status FROM runs WHERE id=?", (run,))["status"] == "attention"
+    assert c.get("/api/stations").json()[0]["attempt"] is not None
+    assert c.post("/api/runs", json=request).status_code == 409
+    assert c.post(f"/api/runs/{run}/stop").status_code == 200
+    attempt_id = db.one("SELECT id FROM attempts WHERE run_id=?", (run,))["id"]
+    assert c.post(f"/api/agent/attempts/{attempt_id}/finish", headers=auth(1), json={"status": "interrupted"}).status_code == 200
+    assert db.one("SELECT status FROM runs WHERE id=?", (run,))["status"] == "interrupted"
+
+
+def test_late_start_ack_cannot_revive_a_cancelled_run(logged):
+    c = setup(logged)
+    run = c.post("/api/runs", json={"exercise_id": "braking", "mode": "individual", "participants": [{"trainee_id": "anna", "station_id": "demo-01"}]}).json()["id"]
+    command = c.get("/api/agent/commands", headers=auth(1)).json()[0]
+    c.post(f"/api/agent/commands/{command['id']}/result", headers=auth(1), json={"status": "succeeded", "result": {"verified": True}})
+    c.post(f"/api/runs/{run}/start")
+    command = c.get("/api/agent/commands", headers=auth(1)).json()[0]
+    c.post(f"/api/agent/commands/{command['id']}/result", headers=auth(1), json={"status": "running", "result": {}})
+    c.post(f"/api/runs/{run}/stop")
+    ack = {"status": "succeeded", "result": {"actual": {"track_id": "demo_circuit", "layout": "training", "car": "training_gt", "simulated": True}}}
+    assert c.post(f"/api/agent/commands/{command['id']}/result", headers=auth(1), json=ack).status_code == 409
+    assert c.app.state.db.one("SELECT status FROM runs WHERE id=?", (run,))["status"] == "stopping"
+
+
+def test_cross_chunk_time_reversal_is_rejected(logged):
+    c = setup(logged)
+    sample = c.get("/api/attempts/seed-attempt-0/export").json()["samples"][-1]
+    sample.update(seq=3000, t=0)
+    assert c.post("/api/agent/attempts/seed-attempt-0/telemetry", headers=auth(1), json={"chunk_id": "reversed-time", "samples": [sample]}).status_code == 409
 
 
 def test_analysis_local_deltas_sum_and_reference(logged):

@@ -17,6 +17,20 @@ TRANSITIONS = {
 }
 
 
+def expire_commands(db):
+    """Expire centrally even if an agent is offline; preserve uncertain reservations."""
+    with db.transaction() as c:
+        expired = c.execute("SELECT * FROM commands WHERE status IN ('queued','accepted','running') AND expires<?", (time.time(),)).fetchall()
+        for row in expired:
+            result = {"error": "Minął termin wykonania; rzeczywisty stan wymaga uzgodnienia"}
+            c.execute("UPDATE commands SET status='expired',result=? WHERE id=?", (dump(result), row["id"]))
+            payload = json.loads(row["payload"])
+            if row["kind"] in ("prepare_session", "start_session", "stop_session"):
+                c.execute("UPDATE attempts SET status='attention' WHERE id=? AND status NOT IN ('completed','interrupted')", (payload.get("attempt_id"),))
+                c.execute("UPDATE runs SET status='attention' WHERE id=? AND status NOT IN ('completed','interrupted')", (payload.get("run_id"),))
+            db.audit("system", "command.expired", row["id"], result, c)
+
+
 def register_routes(app, db):
     @app.post("/api/agent/heartbeat")
     def heartbeat(body: Heartbeat, source=Depends(station)):
@@ -26,14 +40,8 @@ def register_routes(app, db):
 
     @app.get("/api/agent/commands")
     def poll_commands(source=Depends(station)):
+        expire_commands(db)
         with db.transaction() as c:
-            expired = c.execute("SELECT * FROM commands WHERE station_id=? AND status IN ('queued','accepted','running') AND expires<?", (source["id"], time.time())).fetchall()
-            for row in expired:
-                c.execute("UPDATE commands SET status='expired',result=? WHERE id=?", (dump({"error": "Minął termin wykonania; stan wymaga uzgodnienia"}), row["id"]))
-                payload = json.loads(row["payload"])
-                if row["kind"] in ("prepare_session", "start_session"):
-                    c.execute("UPDATE attempts SET status='failed' WHERE id=? AND status IN ('preparing','running')", (payload.get("attempt_id"),))
-                    c.execute("UPDATE runs SET status='attention' WHERE id=? AND status NOT IN ('completed','interrupted')", (payload.get("run_id"),))
             rows = c.execute("SELECT * FROM commands WHERE station_id=? AND status IN ('queued','accepted','running') ORDER BY created LIMIT 20", (source["id"],)).fetchall()
         return [{**dict(row), "payload": json.loads(row["payload"]), "result": json.loads(row["result"])} for row in rows]
 
@@ -52,13 +60,27 @@ def apply_command_result(db, station_id, command_id, status, result):
         if not raw:
             raise HTTPException(404, "Nie znaleziono polecenia tego stanowiska")
         row = dict(raw)
-        if row["status"] == status and (status in TERMINAL or json.loads(row["result"]) == result):
+        if row["status"] == status:
+            if json.loads(row["result"]) != result:
+                raise HTTPException(409, "Powtórzony wynik polecenia zawiera inne dane")
             return
         if row["status"] in TERMINAL or status not in TRANSITIONS.get(row["status"], set()):
             raise HTTPException(409, "Niedozwolona zmiana stanu polecenia")
         if time.time() > row["expires"]:
             raise HTTPException(409, "Polecenie wygasło; wymagane uzgodnienie stanu")
         payload = json.loads(row["payload"])
+        if row["kind"] == "prepare_session" and status == "succeeded" and result.get("verified") is not True:
+            raise HTTPException(422, "Agent nie potwierdził weryfikacji scenariusza")
+        if row["kind"] in ("prepare_session", "start_session") and status == "succeeded":
+            run = c.execute("SELECT status FROM runs WHERE id=?", (payload["run_id"],)).fetchone()
+            permitted = ("preparing", "ready") if row["kind"] == "prepare_session" else ("starting", "running")
+            if not run or run["status"] not in permitted:
+                raise HTTPException(409, "Sesja została anulowana lub wymaga uzgodnienia; spóźniony start nie jest przyjmowany")
+            profile = payload["scenario"].get("hardware_profile")
+            if profile:
+                hardware = result.get("hardware", {}).get("actual", {}) if row["kind"] == "prepare_session" else result.get("actual", {}).get("hardware", {})
+                if any(hardware.get(k) != profile[k] for k in ("degrees", "strength")):
+                    raise HTTPException(422, "Agent nie potwierdził profilu sprzętu wymaganego w ćwiczeniu")
         if row["kind"] == "start_session" and status == "succeeded":
             expected = payload["scenario"]
             actual = result.get("actual", {})
@@ -77,6 +99,7 @@ def apply_command_result(db, station_id, command_id, status, result):
                 c.execute("UPDATE attempts SET status='failed' WHERE id=?", (attempt_id,))
                 c.execute("UPDATE runs SET status='attention' WHERE id=?", (run_id,))
             elif row["kind"] == "prepare_session":
+                c.execute("UPDATE attempts SET status='ready' WHERE id=? AND status='preparing'", (attempt_id,))
                 remaining = c.execute("SELECT COUNT(*) FROM commands WHERE kind='prepare_session' AND json_extract(payload,'$.run_id')=? AND status!='succeeded'", (run_id,)).fetchone()[0]
                 if not remaining:
                     c.execute("UPDATE runs SET status='ready' WHERE id=? AND status='preparing'", (run_id,))

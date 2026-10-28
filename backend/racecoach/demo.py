@@ -50,6 +50,10 @@ def station_state():
 
 def seed(db):
     if db.one("SELECT id FROM tracks WHERE id='demo-loop'"):
+        teacher = db.one("SELECT id FROM users WHERE role='instructor' LIMIT 1")
+        if teacher and db.one("SELECT id FROM attempts WHERE id='seed-attempt-0'"):
+            with db.transaction() as c:
+                c.execute("INSERT OR IGNORE INTO exercise_references VALUES (?,?,?,?,?)", ("braking", "seed-attempt-0", 0, teacher["id"], time.time()))
         return
     now = time.time()
     sections = [{"id": str(i + 1), "name": name, "start": start, "end": end} for i, (name, start, end) in enumerate([
@@ -64,7 +68,7 @@ def seed(db):
             c.execute("INSERT INTO trainees VALUES (?,?)", (key, "Konto demonstracyjne. Wszystkie przejazdy są syntetyczne."))
         for key, title, mode, rain in [("braking", "Hamowanie i płynne wyjście", "either", 0), ("group", "Jazda za instruktorem", "multiplayer", 0), ("wet", "Adaptacja do mokrej nawierzchni", "either", .5)]:
             conditions = {"weather": "3_clear", "air_temp": 22, "road_temp": 29, "grip": 1, "rain": rain, "time": "13:00"}
-            c.execute("INSERT INTO exercises VALUES (?,?,?,?,?,?,?,?)", (key, title, "demo-loop", "training_gt", dump(conditions), 15, mode, 1))
+            c.execute("INSERT INTO exercises(id,title,track_id,car,conditions,duration,mode,revision) VALUES (?,?,?,?,?,?,?,?)", (key, title, "demo-loop", "training_gt", dump(conditions), 15, mode, 1))
         for key, name in [("demo-01", "Stanowisko 01"), ("demo-02", "Stanowisko 02")]:
             c.execute("INSERT INTO stations VALUES (?,?,?,?,?,?,?)", (key, name, digest("internal-demo-" + key), 1, now, now, dump(station_state())))
         for student in ("anna", "piotr", "lena"):
@@ -88,13 +92,17 @@ def seed(db):
         samples = demo_lap(factor, i * .4)
         for index in range(0, len(samples), 500):
             store_chunk(db, f"seed-attempt-{i}", f"seed-{index}", samples[index:index + 500])
+    instructor = db.one("SELECT id FROM users WHERE role='instructor' LIMIT 1")
+    if instructor:
+        with db.transaction() as c:
+            c.execute("INSERT INTO exercise_references VALUES (?,?,?,?,?)", ("braking", "seed-attempt-0", 0, instructor["id"], time.time()))
 
 
 async def demo_loop(db):
     jobs = {}
     # A restart never resumes a process or an unconfirmed demo start silently.
     with db.transaction() as c:
-        c.execute("UPDATE attempts SET status='interrupted',note='Demo uruchomione ponownie' WHERE station_id IN (SELECT id FROM stations WHERE simulated=1) AND status IN ('running','preparing','stopping')")
+        c.execute("UPDATE attempts SET status='interrupted',note='Demo uruchomione ponownie' WHERE station_id IN (SELECT id FROM stations WHERE simulated=1) AND status IN ('running','preparing','ready','stopping','attention')")
         c.execute("UPDATE commands SET status='unknown',result=? WHERE station_id IN (SELECT id FROM stations WHERE simulated=1) AND status IN ('queued','accepted','running')", (dump({"error": "Restart demonstracji"}),))
         c.execute("UPDATE runs SET status='interrupted',ended=? WHERE status NOT IN ('completed','interrupted') AND NOT EXISTS (SELECT 1 FROM attempts a JOIN stations s ON s.id=a.station_id WHERE a.run_id=runs.id AND s.simulated=0)", (time.time(),))
         c.execute("UPDATE stations SET state=? WHERE simulated=1", (dump(station_state()),))
@@ -107,12 +115,19 @@ async def demo_loop(db):
                 if cmd["expires"] < time.time():
                     continue
                 if cmd["kind"] == "prepare_session":
-                    apply_command_result(db, source["id"], cmd["id"], "succeeded", {"verified": True, "simulated": True})
+                    profile = payload["scenario"].get("hardware_profile")
+                    if profile:
+                        state["hardware"].update(profile)
+                    result = {"verified": True, "simulated": True}
+                    if profile:
+                        result["hardware"] = {"actual": profile, "simulated": True}
+                    apply_command_result(db, source["id"], cmd["id"], "succeeded", result)
                     state["game"] = "idle"
                 elif cmd["kind"] == "start_session":
                     scenario = payload["scenario"]
                     actual = {k: scenario[k] for k in ("track_id", "layout", "car")}
                     actual["simulated"] = True
+                    actual["hardware"] = dict(state["hardware"])
                     apply_command_result(db, source["id"], cmd["id"], "succeeded", {"actual": actual})
                     first = demo_lap(1.02 if source["id"] == "demo-01" else 1.045, .5)
                     second = demo_lap(1.015, .3, lap=1, seq_start=len(first), start_time=first[-1]["t"] + .01)

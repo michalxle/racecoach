@@ -25,6 +25,11 @@ def store_chunk(db, attempt_id, chunk_id, samples):
             raise HTTPException(404, "Nie znaleziono próby")
         if samples[0]["seq"] <= attempt["last_seq"]:
             raise HTTPException(409, "Porcje telemetrii muszą być wysyłane w kolejności")
+        previous_chunk = c.execute("SELECT data FROM telemetry_chunks WHERE attempt_id=? ORDER BY last_seq DESC LIMIT 1", (attempt_id,)).fetchone()
+        if previous_chunk:
+            previous_sample = json.loads(zlib.decompress(previous_chunk[0]))[-1]
+            if samples[0]["t"] < previous_sample["t"] or samples[0]["lap"] < previous_sample["lap"]:
+                raise HTTPException(409, "Czas lub numer okrążenia cofnął się między porcjami; rozpocznij nową próbę")
         c.execute("INSERT INTO telemetry_chunks VALUES (?,?,?,?,?,?,?,?)", (attempt_id, chunk_id, samples[0]["seq"], samples[-1]["seq"], len(samples), checksum, zlib.compress(raw), time.time()))
         c.execute("UPDATE attempts SET last_seq=? WHERE id=?", (samples[-1]["seq"], attempt_id))
     return True
@@ -68,7 +73,8 @@ def split_laps(samples):
         monotonic = all(b["progress"] >= a["progress"] - .0001 for a, b in zip(points, points[1:]))
         gap = max((b["t"] - a["t"] for a, b in zip(points, points[1:])), default=0)
         position_gap = max((b["progress"] - a["progress"] for a, b in zip(points, points[1:])), default=0)
-        complete = len(points) > 10 and points[0]["progress"] <= .002 and points[-1]["progress"] >= .998 and monotonic
+        time_ordered = all(b["t"] >= a["t"] for a, b in zip(points, points[1:]))
+        complete = len(points) > 10 and points[0]["progress"] <= .002 and points[-1]["progress"] >= .998 and monotonic and time_ordered and points[-1]["t"] > points[0]["t"]
         usable = complete and gap <= .5 and position_gap <= .04 and all(p["valid"] for p in points)
         result.append({"lap": lap, "duration": points[-1]["t"] - points[0]["t"], "complete": complete,
                        "usable": usable, "samples": len(points), "max_gap": gap,

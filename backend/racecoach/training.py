@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, Query
 
 from .app import instructor, require_row, station, user
 from .db import dump, uid
-from .models import (AttemptFinish, AttemptReview, ExerciseCreate, HardwareProfile,
+from .models import (AttemptFinish, AttemptReview, ExerciseCreate, ExerciseReference, HardwareProfile,
                      RunCreate, TelemetryBatch, TrackCreate, WeatherChange)
 from .telemetry import analyze, load_samples, select_lap, split_laps, store_chunk
 
@@ -25,7 +25,8 @@ def decode_track(row):
 
 def can_read_attempt(db, attempt_id, actor):
     row = require_row(db, "attempts", attempt_id)
-    if actor["role"] == "trainee" and row["trainee_id"] != actor["id"]:
+    shared_reference = db.one("SELECT exercise_id FROM exercise_references WHERE attempt_id=?", (attempt_id,))
+    if actor["role"] == "trainee" and row["trainee_id"] != actor["id"] and not shared_reference:
         raise HTTPException(403, "Brak dostępu do przejazdu innego kursanta")
     return row
 
@@ -35,10 +36,11 @@ def finish_attempt(db, attempt_id, status, config, note):
         row = c.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
         if row["status"] in ("completed", "interrupted", "failed"):
             return
-        c.execute("UPDATE attempts SET status=?,config=?,note=? WHERE id=?", (status, dump(config), note, attempt_id))
+        confirmed = {**json.loads(row["config"]), **config}
+        c.execute("UPDATE attempts SET status=?,config=?,note=? WHERE id=?", (status, dump(confirmed), note, attempt_id))
         if row["plan_item_id"]:
             c.execute("UPDATE plan_items SET status='ready' WHERE id=? AND status='running'", (row["plan_item_id"],))
-        active = c.execute("SELECT COUNT(*) FROM attempts WHERE run_id=? AND status IN ('preparing','running','stopping')", (row["run_id"],)).fetchone()[0]
+        active = c.execute("SELECT COUNT(*) FROM attempts WHERE run_id=? AND status IN ('preparing','ready','running','stopping','attention')", (row["run_id"],)).fetchone()[0]
         if not active:
             failed = c.execute("SELECT COUNT(*) FROM attempts WHERE run_id=? AND status!='completed'", (row["run_id"],)).fetchone()[0]
             c.execute("UPDATE runs SET status=?,ended=? WHERE id=?", ("interrupted" if failed else "completed", time.time(), row["run_id"]))
@@ -64,6 +66,8 @@ def register_training_routes(app, db):
         rows = db.all("SELECT e.*,t.name AS track_name,t.layout FROM exercises e JOIN tracks t ON t.id=e.track_id ORDER BY e.title")
         for row in rows:
             row["conditions"] = json.loads(row["conditions"])
+            row["hardware_profile"] = json.loads(row["hardware_profile"]) if row["hardware_profile"] else None
+            row["reference"] = db.one("SELECT attempt_id,lap FROM exercise_references WHERE exercise_id=?", (row["id"],))
         return rows
 
     @app.post("/api/exercises", status_code=201)
@@ -71,9 +75,22 @@ def register_training_routes(app, db):
         require_row(db, "tracks", body.track_id)
         row_id = uid()
         with db.transaction() as c:
-            c.execute("INSERT INTO exercises VALUES (?,?,?,?,?,?,?,?)", (row_id, body.title, body.track_id, body.car, dump(body.conditions.model_dump()), body.duration, body.mode, 1))
+            c.execute("INSERT INTO exercises(id,title,track_id,car,conditions,duration,mode,revision,hardware_profile) VALUES (?,?,?,?,?,?,?,?,?)", (row_id, body.title, body.track_id, body.car, dump(body.conditions.model_dump()), body.duration, body.mode, 1, dump(body.hardware_profile.model_dump()) if body.hardware_profile else None))
             db.audit(actor["id"], "exercise.create", row_id, body.model_dump(), c)
         return {"id": row_id}
+
+    @app.post("/api/exercises/{exercise_id}/reference")
+    def set_reference(exercise_id: str, body: ExerciseReference, actor=Depends(instructor)):
+        require_row(db, "exercises", exercise_id)
+        attempt = require_row(db, "attempts", body.attempt_id)
+        run = require_row(db, "runs", attempt["run_id"])
+        if run["exercise_id"] != exercise_id or attempt["status"] not in ("completed", "interrupted"):
+            raise HTTPException(422, "Wzorzec musi być zakończoną próbą tego ćwiczenia")
+        select_lap(split_laps(load_samples(db, body.attempt_id)), body.lap)
+        with db.transaction() as c:
+            c.execute("INSERT OR REPLACE INTO exercise_references VALUES (?,?,?,?,?)", (exercise_id, body.attempt_id, body.lap, actor["id"], time.time()))
+            db.audit(actor["id"], "exercise.reference", exercise_id, body.model_dump(), c)
+        return {"ok": True}
 
     @app.get("/api/runs")
     def runs(actor=Depends(instructor)):
@@ -92,7 +109,8 @@ def register_training_routes(app, db):
             raise HTTPException(422, "Ćwiczenie nie obsługuje tego trybu")
         scenario = {"exercise_id": exercise["id"], "revision": exercise["revision"], "track_key": track["id"],
                     "track_id": track["game_id"], "layout": track["layout"], "track": track, "car": exercise["car"],
-                    "conditions": json.loads(exercise["conditions"]), "duration": exercise["duration"], "mode": body.mode}
+                    "conditions": json.loads(exercise["conditions"]), "duration": exercise["duration"], "mode": body.mode,
+                    "hardware_profile": json.loads(exercise["hardware_profile"]) if exercise["hardware_profile"] else None}
         sources = []
         for p in body.participants:
             source = require_row(db, "stations", p.station_id)
@@ -123,10 +141,13 @@ def register_training_routes(app, db):
         with db.transaction() as c:
             # The lock and transaction keep double-clicks and concurrent instructors from reserving a station twice.
             for p in body.participants:
-                busy = c.execute("SELECT id FROM attempts WHERE (station_id=? OR trainee_id=?) AND status IN ('preparing','running','stopping')", (p.station_id, p.trainee_id)).fetchone()
+                busy = c.execute("SELECT id FROM attempts WHERE (station_id=? OR trainee_id=?) AND status IN ('preparing','ready','running','stopping','attention')", (p.station_id, p.trainee_id)).fetchone()
                 if busy:
                     raise HTTPException(409, "Stanowisko lub kursant ma już aktywną próbę")
             if body.mode == "multiplayer" and not sources[0]["simulated"]:
+                other = c.execute("SELECT r.id FROM runs r JOIN attempts a ON a.run_id=r.id JOIN stations s ON s.id=a.station_id WHERE r.mode='multiplayer' AND s.simulated=0 AND r.status NOT IN ('completed','interrupted') LIMIT 1").fetchone()
+                if other:
+                    raise HTTPException(409, "Zarządzany serwer ma już aktywną lub nieuzgodnioną sesję grupową")
                 try:
                     scenario["connection"] = app.state.server_manager.start(run_id, scenario, body.participants)
                 except (RuntimeError, OSError) as exc:
@@ -199,7 +220,7 @@ def register_training_routes(app, db):
         if "hardware.profile" not in state.get("capabilities", []):
             raise HTTPException(409, "Agent nie udostępnia konfiguracji sprzętu")
         with db.transaction() as c:
-            if c.execute("SELECT id FROM attempts WHERE station_id=? AND status IN ('preparing','running','stopping')", (station_id,)).fetchone():
+            if c.execute("SELECT id FROM attempts WHERE station_id=? AND status IN ('preparing','ready','running','stopping','attention')", (station_id,)).fetchone():
                 raise HTTPException(409, "Stanowisko jest zarezerwowane do sesji")
             command = enqueue(c, station_id, "hardware_profile", body.model_dump())
             db.audit(actor["id"], "hardware.profile", station_id, body.model_dump(), c)
@@ -210,7 +231,7 @@ def register_training_routes(app, db):
         query = "SELECT a.*,u.name AS trainee_name,s.name AS station_name,e.title AS exercise_title,r.mode,r.scenario FROM attempts a JOIN users u ON u.id=a.trainee_id JOIN stations s ON s.id=a.station_id JOIN runs r ON r.id=a.run_id JOIN exercises e ON e.id=r.exercise_id"
         args = ()
         if actor["role"] == "trainee":
-            query += " WHERE a.trainee_id=?"
+            query += " WHERE (a.trainee_id=? OR a.id IN (SELECT attempt_id FROM exercise_references))"
             args = (actor["id"],)
         rows = db.all(query + " ORDER BY a.created DESC LIMIT 200", args)
         for row in rows:
@@ -218,6 +239,8 @@ def register_training_routes(app, db):
                 row[key] = json.loads(row[key])
             row["scenario"].pop("connection", None)
             row["sample_count"] = db.one("SELECT COALESCE(SUM(count),0) AS n FROM telemetry_chunks WHERE attempt_id=?", (row["id"],))["n"]
+            if actor["role"] == "trainee" and row["trainee_id"] != actor["id"]:
+                row.update(trainee_id="reference", trainee_name="Wzorzec instruktora", station_name="Stanowisko wzorca", plan_item_id=None, note="", result={})
         return rows
 
     @app.get("/api/attempts/{attempt_id}/laps")

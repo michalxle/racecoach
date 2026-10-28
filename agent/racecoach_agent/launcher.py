@@ -59,6 +59,9 @@ class Launcher:
             raise RuntimeError("Na stanowisku brakuje wskazanego auta lub toru")
         if not (self.game_dir / "acs.exe").is_file():
             raise RuntimeError("Brak acs.exe w folderze gry")
+        weather = scenario["conditions"]["weather"]
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", weather) or weather in (".", "..") or not (self.game_dir / "content/weather" / weather).is_dir():
+            raise RuntimeError("Brak wskazanego pakietu pogody w lokalnej instalacji gry")
         hour = int(scenario["conditions"]["time"][:2])
         if not 8 <= hour <= 18:
             raise RuntimeError("Podstawowy adapter obsługuje godziny 08:00–18:59; pozostałe wymagają adaptera CSP")
@@ -89,6 +92,7 @@ class Launcher:
         config["LIGHTING"] = {"SUN_ANGLE": str((hour + minute / 60 - 13) * 16), "TIME_MULT": "1", "CLOUD_SPEED": "0.2"}
         config["TEMPERATURE"] = {"AMBIENT": str(conditions["air_temp"]), "ROAD": str(conditions["road_temp"])}
         config["WEATHER"] = {"NAME": conditions["weather"]}
+        config["WIND"] = {"SPEED_KMH_MIN": "0", "SPEED_KMH_MAX": "0", "DIRECTION_DEG": "0"}
         config["DYNAMIC_TRACK"] = {"SESSION_START": str(conditions["grip"] * 100), "RANDOMNESS": "0", "LAP_GAIN": "0", "SESSION_TRANSFER": "100"}
         config["REMOTE"] = {"ACTIVE": "0"}
         if scenario["mode"] == "multiplayer":

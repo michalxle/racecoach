@@ -54,10 +54,17 @@ class Agent:
                 if self.active:
                     raise RuntimeError("Stanowisko prowadzi już inną próbę")
                 result = self.launcher.prepare(payload["scenario"])
+                if payload["scenario"].get("hardware_profile"):
+                    result["hardware"] = self.hardware.apply(payload["scenario"]["hardware_profile"])
             elif kind == "start_session":
                 if self.active:
                     raise RuntimeError("Stanowisko prowadzi już inną próbę")
                 self.game = "starting"
+                profile = payload["scenario"].get("hardware_profile")
+                if profile:
+                    hardware = self.hardware.snapshot()
+                    if any(hardware.get(k) != profile[k] for k in ("degrees", "strength")):
+                        raise RuntimeError("Profil sprzętu zmienił się po przygotowaniu sesji")
                 actual = self.launcher.start(payload["scenario"])
                 actual["hardware"] = self.hardware.snapshot()
                 with self.lock:

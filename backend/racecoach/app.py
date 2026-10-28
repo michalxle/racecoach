@@ -60,12 +60,13 @@ def create_app(data_dir: str | Path | None = None, demo=False, bootstrap_admin=T
 
     @asynccontextmanager
     async def lifespan(app):
+        import asyncio
         if bootstrap_admin and not db.one("SELECT id FROM users LIMIT 1"):
             token = "Trening2026!" if demo else new_token()[:20]
             email = "instruktor@demo.local" if demo else "instruktor@local"
             with db.transaction() as c:
                 c.execute("INSERT INTO users VALUES (?,?,?,?,?,?)",
-                          (uid(), email, "Michał · instruktor", "instructor", password_hash(token), time.time()))
+                          (uid(), email, "Instruktor", "instructor", password_hash(token), time.time()))
             credentials = data_dir / "bootstrap.json"
             fd = os.open(credentials, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w") as f:
@@ -76,7 +77,18 @@ def create_app(data_dir: str | Path | None = None, demo=False, bootstrap_admin=T
             from .demo import seed, demo_loop
             seed(db)
             task = asyncio.create_task(demo_loop(db))
+        async def monitor_expirations():
+            from .routes import expire_commands
+            while True:
+                expire_commands(db)
+                await asyncio.sleep(1)
+        expiration_task = asyncio.create_task(monitor_expirations())
         yield
+        expiration_task.cancel()
+        try:
+            await expiration_task
+        except asyncio.CancelledError:
+            pass
         if task:
             import asyncio
             task.cancel()
@@ -222,7 +234,7 @@ def create_app(data_dir: str | Path | None = None, demo=False, bootstrap_admin=T
         for row in records:
             row["state"] = json.loads(row["state"])
             row["online"] = row["last_seen"] is not None and time.time() - row["last_seen"] < 12
-            row["attempt"] = db.one("SELECT a.id,a.trainee_id,u.name AS trainee_name,a.run_id FROM attempts a JOIN users u ON u.id=a.trainee_id WHERE a.station_id=? AND a.status IN ('preparing','running','stopping') ORDER BY a.created DESC LIMIT 1", (row["id"],))
+            row["attempt"] = db.one("SELECT a.id,a.trainee_id,u.name AS trainee_name,a.run_id FROM attempts a JOIN users u ON u.id=a.trainee_id WHERE a.station_id=? AND a.status IN ('preparing','ready','running','stopping','attention') ORDER BY a.created DESC LIMIT 1", (row["id"],))
         return records
 
     @app.get("/api/commands")
