@@ -179,6 +179,7 @@ export default function App() {
   const [session, setSession] = useState<User | null | undefined>(undefined),
     [meta, setMeta] = useState<{
       demo: boolean;
+      weather_bridge?: boolean;
       demo_login?: { email: string; password: string } | null;
     }>({ demo: false });
   const [page, setPage] = useState<Page>("overview"),
@@ -447,6 +448,7 @@ export default function App() {
               onModal={setModal}
               action={action}
               pending={pending}
+              weatherAvailable={meta.demo || !!meta.weather_bridge}
             />
           )}
           {page === "trainees" && privileged && (
@@ -920,11 +922,13 @@ function Stations({
   onModal,
   action,
   pending,
+  weatherAvailable,
 }: {
   data: Data;
   onModal: (m: Modal) => void;
   action: (path: string, body?: unknown, message?: string) => Promise<void>;
   pending: boolean;
+  weatherAvailable: boolean;
 }) {
   const activeRuns = data.runs.filter(
     (r) => !["completed", "interrupted"].includes(r.status),
@@ -1008,7 +1012,12 @@ function Stations({
                   <button
                     className="button secondary small"
                     onClick={() => onModal({ kind: "weather", id: r.id })}
-                    disabled={pending}
+                    disabled={pending || !weatherAvailable}
+                    title={
+                      weatherAvailable
+                        ? undefined
+                        : "Zmiana pogody podczas jazdy wymaga mostu do kontrolera CSP (RACECOACH_WEATHER_BRIDGE). Warunki startowe ustawia scenariusz."
+                    }
                   >
                     Zmień warunki
                   </button>

@@ -83,9 +83,9 @@ class ServerManager:
                     self.backups.append((path, None))
             try:
                 with cfg_path.open("w", encoding="utf-8") as f:
-                    config.write(f)
+                    config.write(f, space_around_delimiters=False)
                 with entry_path.open("w", encoding="utf-8") as f:
-                    entries.write(f)
+                    entries.write(f, space_around_delimiters=False)
                 self.log = (backup_dir / "server.log").open("ab")
                 self.process = subprocess.Popen([str(binary)], cwd=folder, stdout=self.log, stderr=subprocess.STDOUT)
                 self.run_id = run_id

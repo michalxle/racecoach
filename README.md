@@ -4,6 +4,9 @@ Lokalny system zarządzania stanowiskami **oryginalnego Assetto Corsa** i szkole
 Wersja MVP: działająca aplikacja z trwałymi danymi, panelem i jawnym trybem demonstracyjnym.
 Kod integracji gry i sprzętu wymaga odbioru na docelowych stanowiskach Windows.
 
+> **Jeden komputer z Assetto Corsa (centrala + stanowisko):** dwuklik `START-RaceCoach.bat`,
+> potem `PRZYGOTUJ-SCENARIUSZ.bat` — szczegóły w [URUCHOMIENIE-LOKALNE.md](URUCHOMIENIE-LOKALNE.md).
+
 ## Uruchomienie na macOS / Linux
 
 Wymagania: Python 3.11+ (zweryfikowany 3.12), Node 22.12+ lub 24/26, npm i Git.

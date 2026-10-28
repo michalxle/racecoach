@@ -74,19 +74,29 @@ class Launcher:
             raise RuntimeError("Brak konfiguracji serwera sesji grupowej")
         return {"verified": True, "contents": sorted(required), "simulated": False}
 
+    def choose_skin(self, car, preferred=""):
+        """Stałe malowanie: pusty SKIN w race.ini sprawia, że AC losuje malowanie przy każdym starcie."""
+        folder = self.game_dir / "content/cars" / car / "skins"
+        names = sorted((p.name for p in folder.iterdir() if p.is_dir()), key=str.lower) if folder.is_dir() else []
+        if preferred and preferred in names:
+            return preferred
+        return names[0] if names else ""
+
     def make_config(self, scenario, driver_name):
         config = configparser.ConfigParser(interpolation=None)
         config.optionxform = str
         race_file = self.documents / "cfg/race.ini"
         if race_file.exists():
             config.read(race_file, encoding="utf-8-sig")
+        previous_skin = config.get("RACE", "SKIN", fallback="") if config.get("RACE", "MODEL", fallback="") == scenario["car"] else ""
+        skin = self.choose_skin(scenario["car"], scenario.get("skin") or previous_skin)
         for name in list(config):
             if name.startswith(("SESSION_", "CAR_", "CONDITION_")) or name in ("REPLAY", "BENCHMARK", "REMOTE", "RESTART", "GHOST_CAR"):
                 config.remove_section(name)
         config["HEADER"] = {"VERSION": "2"}
         config["RACE"] = {"TRACK": scenario["track_id"], "CONFIG_TRACK": scenario["layout"], "MODEL": scenario["car"],
-                          "MODEL_CONFIG": "", "SKIN": "", "CARS": "1", "AI_LEVEL": "100", "PENALTIES": "1", "DRIFT_MODE": "0"}
-        config["CAR_0"] = {"MODEL": "-", "SKIN": "", "DRIVER_NAME": driver_name, "NATIONALITY": "Poland"}
+                          "MODEL_CONFIG": "", "SKIN": skin, "CARS": "1", "AI_LEVEL": "100", "PENALTIES": "1", "DRIFT_MODE": "0"}
+        config["CAR_0"] = {"MODEL": "-", "SKIN": skin, "DRIVER_NAME": driver_name, "NATIONALITY": "Poland"}
         config["SESSION_0"] = {"NAME": "RaceCoach Practice", "TYPE": "1", "DURATION_MINUTES": str(scenario["duration"]), "SPAWN_SET": "PIT"}
         conditions = scenario["conditions"]
         hour, minute = map(int, conditions["time"].split(":"))
@@ -116,7 +126,8 @@ class Launcher:
         try:
             temporary = race_file.with_suffix(".racecoach.tmp")
             with temporary.open("w", encoding="utf-8") as f:
-                config.write(f)
+                # AC czyta "KLUCZ=wartość"; spacje wokół "=" trafiają do wartości (TRACK NOT FOUND).
+                config.write(f, space_around_delimiters=False)
             temporary.replace(race_file)
             self.process = subprocess.Popen([str(self.game_dir / "acs.exe")], cwd=self.game_dir)
         except Exception:

@@ -16,6 +16,19 @@ from .launcher import game_running
 log = logging.getLogger("racecoach.agent")
 
 
+def monotonic_samples(samples):
+    """Usuwa próbki z cofniętym czasem lub numerem (np. zapisane przez starszą wersję na linii mety)."""
+    result = []
+    for sample in samples:
+        if not isinstance(sample, dict) or "t" not in sample or "seq" not in sample:
+            return samples
+        if result and (sample["seq"] <= result[-1]["seq"] or sample["t"] < result[-1]["t"]):
+            log.warning("Pomijam próbkę %s z cofniętym czasem %.3f s", sample["seq"], sample["t"])
+            continue
+        result.append(sample)
+    return result
+
+
 class Agent:
     def __init__(self, server, token, store, launcher, hardware):
         self.client = httpx.Client(base_url=server.rstrip("/"), headers={"Authorization": "Bearer " + token}, timeout=4)
@@ -37,9 +50,21 @@ class Agent:
             row = self.store.pending()
             if not row:
                 return
-            response = self.client.post(row["route"], json=json.loads(row["body"]))
+            body = json.loads(row["body"])
+            telemetry = row["route"].endswith("/telemetry")
+            if telemetry:
+                body["samples"] = monotonic_samples(body.get("samples", []))
+                if not body["samples"]:
+                    self.store.delivered(row["id"])
+                    continue
+            response = self.client.post(row["route"], json=body)
             if response.status_code in (404, 409) and "/commands/" in row["route"]:
                 log.warning("Wynik polecenia wymaga uzgodnienia: %s", response.text)
+                self.store.delivered(row["id"])
+                continue
+            if response.status_code == 422 and telemetry:
+                # Ponawianie odrzuconej porcji zablokowałoby kolejkę, także zakończenie próby.
+                log.error("Centrala odrzuciła porcję telemetrii %s; pomijam ją: %s", body.get("chunk_id"), response.text[:500])
                 self.store.delivered(row["id"])
                 continue
             response.raise_for_status()

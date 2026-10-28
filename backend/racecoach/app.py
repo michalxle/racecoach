@@ -151,7 +151,8 @@ def create_app(data_dir: str | Path | None = None, demo=False, bootstrap_admin=T
 
     @app.get("/api/meta")
     def meta():
-        return {"demo": demo, "demo_login": {"email": "instruktor@demo.local", "password": "Trening2026!"} if demo else None}
+        return {"demo": demo, "weather_bridge": demo or bool(os.getenv("RACECOACH_WEATHER_BRIDGE") and os.getenv("RACECOACH_WEATHER_TOKEN")),
+                "demo_login": {"email": "instruktor@demo.local", "password": "Trening2026!"} if demo else None}
 
     @app.post("/api/auth/login")
     def login(body: Login, request: Request, response: Response):
