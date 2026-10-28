@@ -79,6 +79,28 @@ def test_launcher_generates_individual_and_group_configuration(tmp_path):
     assert config["REMOTE"]["ACTIVE"] == "1"
 
 
+def test_launcher_writes_race_ini_without_spaces_around_equals(tmp_path, monkeypatch):
+    # AC nie usuwa spacji z wartości: "TRACK = monza" kończy się komunikatem TRACK NOT FOUND.
+    from racecoach_agent import launcher as launcher_module
+
+    class FakeProcess:
+        def poll(self): return None
+
+    class FakeReader:
+        def identity(self): return {"track_id": "monza", "layout": "", "car": "ks_mazda_mx5_cup"}
+        def close(self): pass
+
+    launcher = Launcher(tmp_path, tmp_path / "docs", tmp_path / "state")
+    monkeypatch.setattr(launcher, "prepare", lambda scenario: None)
+    monkeypatch.setattr(launcher_module.subprocess, "Popen", lambda *a, **k: FakeProcess())
+    monkeypatch.setattr(launcher_module, "ACReader", FakeReader)
+    scenario = {"track_id": "monza", "layout": "", "car": "ks_mazda_mx5_cup", "duration": 15, "mode": "individual",
+                "conditions": {"air_temp": 22, "road_temp": 29, "weather": "3_clear", "time": "13:00", "grip": 1}}
+    launcher.start(scenario, "Kamil")
+    text = (tmp_path / "docs/cfg/race.ini").read_text(encoding="utf-8")
+    assert "TRACK=monza\n" in text and "MODEL=ks_mazda_mx5_cup\n" in text
+    assert " = " not in text
+
 def test_track_export_reads_geometry_and_rejects_traversal(tmp_path):
     folder = tmp_path / "content/tracks/example/ai"
     folder.mkdir(parents=True)
@@ -89,3 +111,35 @@ def test_track_export_reads_geometry_and_rejects_traversal(tmp_path):
     assert result["game_id"] == "example" and result["length"] > 300
     assert result["geometry"][2] == [100, 100]
     with pytest.raises(ValueError): export_track(tmp_path, "../../outside")
+
+
+def test_reader_skips_finish_line_frame_with_reset_lap_time():
+    # AC zeruje iCurrentTime klatkę przed zwiększeniem completedLaps; czas próbek nie może się cofać.
+    p, g = Physics(), Graphics()
+    class Mapping:
+        def __init__(self, value): self.value = value
+        def read(self): return self.value
+    reader = ACReader()
+    reader.maps = [Mapping(p), Mapping(g), Mapping(Static())]
+    p.packet_id, g.status, g.laps, g.current_ms = 1, 2, 0, 164121
+    first, _ = reader.read()
+    p.packet_id, g.current_ms = 2, 3
+    assert reader.read() == (None, "live")
+    p.packet_id, g.laps, g.current_ms, g.last_ms = 3, 1, 18, 164136
+    after, _ = reader.read()
+    assert after["lap"] == 1 and after["t"] > first["t"] and after["seq"] == first["seq"] + 1
+
+
+def test_launcher_uses_fixed_skin_instead_of_random(tmp_path):
+    # Pusty SKIN w race.ini powoduje losowe malowanie przy każdym starcie AC.
+    for name in ("02_red", "01_blue"):
+        (tmp_path / "content/cars/ks_mazda_mx5_cup/skins" / name).mkdir(parents=True)
+    launcher = Launcher(tmp_path, tmp_path / "docs", tmp_path / "state")
+    scenario = {"track_id": "monza", "layout": "", "car": "ks_mazda_mx5_cup", "duration": 15, "mode": "individual",
+                "conditions": {"air_temp": 22, "road_temp": 29, "weather": "3_clear", "time": "13:00", "grip": 1}}
+    config = launcher.make_config(scenario, "Kamil")
+    assert config["RACE"]["SKIN"] == "01_blue" and config["CAR_0"]["SKIN"] == "01_blue"
+    (tmp_path / "docs/cfg").mkdir(parents=True)
+    (tmp_path / "docs/cfg/race.ini").write_text("[RACE]\nMODEL=ks_mazda_mx5_cup\nSKIN=02_red\n", encoding="utf-8")
+    assert launcher.make_config(scenario, "Kamil")["RACE"]["SKIN"] == "02_red"
+

@@ -98,6 +98,7 @@ class RunCreate(Model):
     exercise_id: str
     mode: Literal["individual", "multiplayer"]
     participants: list[Participant] = Field(min_length=1, max_length=24)
+    race_laps: int | None = Field(default=None, ge=1, le=200)
 
     @model_validator(mode="after")
     def unique_participants(self):
@@ -118,6 +119,7 @@ class Heartbeat(Model):
     catalog: list[str] = Field(default_factory=list, max_length=10000)
     active_attempt: str | None = None
     telemetry: dict | None = None
+    coach: dict | None = None
     error: str | None = Field(default=None, max_length=2000)
 
 
@@ -179,6 +181,39 @@ class Section(Model):
         return self
 
 
+class LapEvent(Model):
+    lap_no: int = Field(ge=1, le=100000)
+    lap: int = Field(ge=0, le=100000)
+    time_ms: int = Field(gt=0, le=24 * 3600 * 1000)
+    valid: bool
+    offtracks: int = Field(default=0, ge=0, le=10000)
+    reason: str = Field(default="", max_length=100)
+    tips: dict = Field(default_factory=dict)
+    trace: dict | None = None
+
+
+class MessageIn(Model):
+    text: str = Field(min_length=1, max_length=300)
+
+
+class OverlayLayout(Model):
+    pos: dict[str, dict[str, float]] = Field(default_factory=dict)
+    off: dict[str, bool] = Field(default_factory=dict)
+
+
+class StationContent(Model):
+    cars: list[dict] = Field(default_factory=list, max_length=5000)
+    tracks: list[dict] = Field(default_factory=list, max_length=5000)
+    weather: list[dict] = Field(default_factory=list, max_length=500)
+    hash: str = Field(max_length=64)
+
+
+class TrackFromGame(Model):
+    track: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.-]+$")
+    layout: str = Field(default="", max_length=100, pattern=r"^[A-Za-z0-9_.-]*$")
+    sections: int = Field(default=6, ge=1, le=60)
+
+
 class TrackCreate(Model):
     id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.-]+$")
     game_id: str | None = Field(default=None, max_length=100, pattern=r"^[A-Za-z0-9_.-]+$")
@@ -206,3 +241,4 @@ class WeatherChange(Model):
     rain: float = Field(ge=0, le=1)
     wetness: float = Field(ge=0, le=1)
     water: float = Field(ge=0, le=1)
+    transition: float = Field(default=30, ge=0, le=600)

@@ -133,3 +133,23 @@ def test_gaps_and_reversed_driving_are_not_silently_compared():
     assert split_laps(points)[0]["usable"] is True
     points[100]["progress"] = .01
     assert split_laps(points)[0]["usable"] is False
+
+
+def test_split_laps_handles_position_wrapping_before_lap_counter():
+    # Rzeczywiste AC: pozycja przewija się do 0 kilka klatek przed zwiększeniem licznika okrążeń.
+    from racecoach.telemetry import split_laps
+    def sample(seq, t, lap, progress):
+        return {"seq": seq, "t": t, "lap": lap, "progress": progress, "x": 0, "y": 0, "z": 0, "speed": 100,
+                "throttle": 1, "brake": 0, "steer": 0, "gear": 3, "rpm": 5000, "valid": True}
+    samples, seq, t = [], 0, 0.0
+    for lap in (0, 1, 2):
+        start = .9 if lap == 0 else .0004
+        for i in range(61):
+            samples.append(sample(seq, t, lap, min(start + i * (.9995 - start) / 60, .9995))); seq += 1; t += .3
+        if lap < 2:
+            for progress in (.0000, .0001, .0002):
+                samples.append(sample(seq, t, lap, progress)); seq += 1; t += .01
+    laps = {lap["lap"]: lap for lap in split_laps(samples)}
+    assert laps[1]["complete"] and laps[1]["usable"]
+    assert not laps[0]["complete"]
+

@@ -96,6 +96,8 @@ export type Station = {
     telemetry?: Sample;
     error?: string;
     capabilities?: string[];
+    catalog?: string[];
+    coach?: import("./coaching").CoachState | null;
   };
   attempt: null | {
     id: string;
@@ -114,6 +116,7 @@ export type Scenario = {
   conditions: Conditions;
   duration: number;
   mode: string;
+  race_laps?: number | null;
 };
 export type Attempt = {
   id: string;
@@ -140,6 +143,8 @@ export type Run = {
   status: string;
   created: number;
   scenario: Scenario;
+  weather_control?: boolean;
+  classification?: import("./coaching").ClassRow[];
   participants: {
     id: string;
     status: string;
@@ -207,4 +212,5 @@ export type Data = {
   attempts: Attempt[];
   runs: Run[];
   commands: Command[];
+  carNames: Record<string, string>;
 };

@@ -56,7 +56,33 @@ def interpolate(samples, progress):
     return {**a, **{k: a[k] + (b[k] - a[k]) * ratio for k in keys}, "progress": progress}
 
 
+def assign_wrapped_tails(samples):
+    """Przenosi koniec okrążenia z już przewiniętą pozycją do następnego okrążenia.
+
+    W AC zero linii toru (normalizedCarPosition) leży kilka metrów przed linią pomiaru czasu,
+    więc pozycja wraca do 0 kilka klatek przed zwiększeniem licznika okrążeń. Granicą okrążenia
+    w analizie jest przewinięcie pozycji; przesuwany jest tylko ogon (do zmiany numeru okrążenia),
+    żeby wyjazd z boksu przed linią startu nie został pocięty.
+    """
+    result = list(samples)
+    start = 0
+    while start < len(result):
+        end = start
+        while end < len(result) and result[end]["lap"] == result[start]["lap"]:
+            end += 1
+        wrap = None
+        for i in range(start + 1, end):
+            if result[i - 1]["progress"] > .95 and result[i]["progress"] < .05:
+                wrap = i
+        if wrap is not None and all(p["progress"] < .05 for p in result[wrap:end]):
+            for i in range(wrap, end):
+                result[i] = {**result[i], "lap": result[i]["lap"] + 1}
+        start = end
+    return result
+
+
 def split_laps(samples):
+    samples = assign_wrapped_tails(samples)
     groups = {}
     for index, current in enumerate(samples):
         if index:

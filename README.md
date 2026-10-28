@@ -4,6 +4,9 @@ Lokalny system zarządzania stanowiskami **oryginalnego Assetto Corsa** i szkole
 Wersja MVP: działająca aplikacja z trwałymi danymi, panelem i jawnym trybem demonstracyjnym.
 Kod integracji gry i sprzętu wymaga odbioru na docelowych stanowiskach Windows.
 
+> **Jeden komputer z Assetto Corsa (centrala + stanowisko):** dwuklik `START-RaceCoach.bat`,
+> potem `PRZYGOTUJ-SCENARIUSZ.bat` — szczegóły w [URUCHOMIENIE-LOKALNE.md](URUCHOMIENIE-LOKALNE.md).
+
 ## Uruchomienie na macOS / Linux
 
 Wymagania: Python 3.11+ (zweryfikowany 3.12), Node 22.12+ lub 24/26, npm i Git.
@@ -64,6 +67,14 @@ potrzebny jest własny reverse proxy HTTPS i `RACECOACH_SECURE_COOKIES=1`.
 - Adapter Windows: konfiguracja/start `acs.exe`, odczyt pamięci AC, lokalna kolejka offline.
 - Adapter bazy DD: ponowne wykorzystanie sterowników OpenFFBoard / FFBeast z `wheel-control`.
 - Generowanie konfiguracji i uruchamianie osobnej instalacji serwera AC do sesji grupowych.
+- Kreator scenariusza z listami z wyszukiwaniem: auta, tory z wariantami i pogoda z gry stanowiska
+  (nazwy z plików gry); mapa toru eksportowana automatycznie przez agenta.
+- Trener na stanowisku (przeniesiony z SimTrainer): okrążenia z ważnością, delta na żywo do wzorca
+  (wzorzec ćwiczenia → rekord kursanta → najlepsze w sesji), wskazówki po okrążeniu dla zakrętów.
+- Nakładki w grze: okno nad grą (PySide6) albo aplikacje RaceCoach w AC; układ ustawiany w panelu;
+  ekran kierowcy (kiosk); wiadomości instruktora.
+- Wyścig na liczbę okrążeń z klasyfikacją (na serwerze AC albo wirtualny), rankingi auto+tor,
+  rekordy osobiste, postęp i osiągnięcia. Opis: [URUCHOMIENIE-LOKALNE.md](URUCHOMIENIE-LOKALNE.md).
 
 Panel odświeża podgląd co 1,5 s, a agent komunikuje się z centralą przez HTTP co około sekundę.
 Osobny wątek agenta odczytuje grę do 100 razy/s i zapisuje tylko nowe pakiety fizyki.
@@ -261,7 +272,7 @@ Stan `unknown` wymaga sprawdzenia lokalnego procesu i konfiguracji, zanim zwolni
 | Nieaktywna zmiana profilu / brak bazy | Agent z `--hardware`, osobny `wheel-control`, zależności `[hardware]`, połączenie USB i brak drugiego właściciela COM/HID. |
 | Brak porównania lub błędna mapa | Pełne okrążenia bez luk, zgodny tor/layout i wersja geometrii, poprawne granice sekcji względem postępu gry. |
 | Zwykła pogoda i pora dnia | Adapter generuje konfigurację początkową; zakres 08:00–18:00. Status `configuration_only` wymaga sprawdzenia w grze, zwłaszcza przy Pure/Sol/CSP. |
-| Deszcz / zmiana pogody podczas jazdy | Potrzebny własny adapter CSP i most pogodowy; sam Content Manager tego nie zapewnia. Bazowy agent odmawia startu scenariusza z deszczem. [Kontrakt mostu](docs/windows-station.md#pogoda-i-csp). |
+| Deszcz / zmiana pogody podczas jazdy | Trening indywidualny: CSP z włączonym WeatherFX na stanowisku — agent instaluje kontroler `racecoach` i zmienia deszcz, mokrość i wodę z potwierdzeniem z gry ([szczegóły](URUCHOMIENIE-LOKALNE.md#co-system-potrafi)). Sesja grupowa: most pogodowy serwera ([kontrakt](docs/windows-station.md#pogoda-i-csp)). Bez CSP agent odmawia startu scenariusza z deszczem. |
 | Pedały i kierownica ESP32 | Odczyt osi/przycisków przez WinMM; zdalny zapis parametrów firmware wymaga dodatkowego protokołu i implementacji. |
 
 Testy automatyczne zastępują proces gry i urządzenia obiektami testowymi. **Nie potwierdzają

@@ -36,7 +36,10 @@ def register_routes(app, db):
     def heartbeat(body: Heartbeat, source=Depends(station)):
         with db.transaction() as c:
             c.execute("UPDATE stations SET last_seen=?,state=? WHERE id=?", (time.time(), dump(body.model_dump()), source["id"]))
-        return {"server_time": time.time()}
+        row = db.one("SELECT content,overlay FROM stations WHERE id=?", (source["id"],))
+        # Agent porównuje skrót katalogu i wysyła go ponownie, gdy centrala go nie ma (np. nowa baza).
+        return {"server_time": time.time(), "content_hash": json.loads(row["content"] or "{}").get("hash"),
+                "overlay": json.loads(row["overlay"] or "{}")}
 
     @app.get("/api/agent/commands")
     def poll_commands(source=Depends(station)):
@@ -52,6 +55,11 @@ def register_routes(app, db):
 
     from .training import register_training_routes
     register_training_routes(app, db)
+    from .content import register_content_routes
+    register_content_routes(app, db)
+    from .coaching import register_coaching_routes, register_overlay_routes
+    register_coaching_routes(app, db)
+    register_overlay_routes(app, db)
 
 
 def apply_command_result(db, station_id, command_id, status, result):

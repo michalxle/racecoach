@@ -90,6 +90,9 @@ class ACReader:
         self.lap = None
         self.completed_time = 0
         self.seq = 0
+        self.physics = self.graphics = None
+        self.last_current_ms = None
+        self.boundary_skips = 0
 
     def connect(self):
         if self.maps:
@@ -112,17 +115,29 @@ class ACReader:
     def read(self):
         self.connect()
         physics, graphics = self.maps[0].read(), self.maps[1].read()
+        self.physics, self.graphics = physics, graphics  # pełny odczyt dla trenera (okrążenia, delta)
         if graphics.status != 2:  # OFF=0, REPLAY=1, LIVE=2, PAUSE=3
             return None, "paused" if graphics.status == 3 else "idle"
         if physics.packet_id == self.last_packet:
             return None, "live"
         if self.lap is not None and graphics.laps < self.lap:
             raise RuntimeError("Gra zresetowała okrążenie; rozpocznij nową próbę")
+        if self.lap is not None and graphics.laps == self.lap and self.last_current_ms is not None \
+                and graphics.current_ms < self.last_current_ms:
+            # Na linii mety AC zeruje czas okrążenia klatkę wcześniej, niż zwiększa licznik okrążeń.
+            # Taka klatka dałaby próbkę z cofniętym czasem, więc czekamy na zmianę numeru okrążenia.
+            self.boundary_skips += 1
+            if self.boundary_skips > 200:
+                raise RuntimeError("Czas okrążenia cofnął się bez zmiany numeru okrążenia; próba wymaga nowego nagrania")
+            self.last_packet = physics.packet_id
+            return None, "live"
+        self.boundary_skips = 0
         if self.lap is not None and graphics.laps > self.lap:
             if graphics.laps != self.lap + 1 or graphics.last_ms <= 0:
                 raise RuntimeError("Utracono granicę okrążenia; próba wymaga nowego nagrania")
             self.completed_time += graphics.last_ms / 1000
         self.lap = graphics.laps
+        self.last_current_ms = graphics.current_ms
         self.last_packet = physics.packet_id
         sample = {"seq": self.seq, "t": self.completed_time + graphics.current_ms / 1000,
                   "lap": graphics.laps, "progress": min(1, max(0, graphics.progress)),

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RaceCoach – nakładki</title>
+<script>
+  // Ta sama strona działa lokalnie u agenta (/) i w panelu centrali (/overlay/<stanowisko>).
+  // Ścieżki zasobów zależą od miejsca, z którego ją podano.
+  window.RC_CENTRAL = location.pathname.startsWith('/overlay/');
+  document.write('<base href="' + (window.RC_CENTRAL ? '/overlay-static/' : '/') + '">');
+</script>
+<link rel="stylesheet" href="overlay.css">
+</head>
+<body>
+<div id="scene" aria-hidden="true">
+  <svg viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid slice">
+    <rect width="1280" height="330" fill="#3a4757"/>
+    <rect y="330" width="1280" height="390" fill="#2e4031"/>
+    <polygon points="560,330 720,330 1180,720 100,720" fill="#3b3e44"/>
+    <polygon points="636,360 644,360 660,440 620,440" fill="#c9cdd2" opacity=".6"/>
+    <polygon points="612,500 668,500 690,620 590,620" fill="#c9cdd2" opacity=".6"/>
+    <polygon points="300,720 980,720 900,600 380,600" fill="#16181c"/>
+  </svg>
+  <div class="scene-label">[ podgląd – tu jest obraz z gry ]</div>
+</div>
+
+<header id="bar" role="toolbar" aria-label="Ustawienia nakładek">
+  <b id="bar-title">Nakładki</b>
+  <span class="bar-group" id="toggles"></span>
+  <span class="bar-group">
+    <label class="tgl"><input type="checkbox" id="opt-scene"> tło podglądu</label>
+    <button class="btn" id="reset" type="button">Resetuj układ</button>
+  </span>
+  <span class="muted small" id="bar-hint">przeciągnij okienko, aby je przesunąć – układ trafia do gry · klawisz H ukrywa pasek</span>
+</header>
+
+<main id="widgets">
+  <section class="widget" id="w-delta" data-name="Delta" aria-label="Delta">
+    <div class="w-title">DELTA <span id="delta-vs" class="muted"></span></div>
+    <div class="delta-num" id="delta-num">—</div>
+    <div class="delta-bar"><i id="delta-fill"></i><span class="mid"></span></div>
+  </section>
+
+  <section class="widget" id="w-times" data-name="Czasy" aria-label="Czasy">
+    <div class="w-title"><span id="t-lap">OKRĄŻENIE –</span><span id="t-pos"></span></div>
+    <div class="t-cur mono" id="t-cur">0:00.0</div>
+    <div class="t-grid">
+      <div><div class="k">Ostatnie</div><div class="mono" id="t-last">—</div></div>
+      <div><div class="k">Najlepsze</div><div class="mono best" id="t-best">—</div></div>
+      <div><div class="k">Rekord</div><div class="mono" id="t-pb">—</div></div>
+    </div>
+  </section>
+
+  <section class="widget" id="w-map" data-name="Minimapa" aria-label="Minimapa">
+    <canvas id="map" width="240" height="240" role="img" aria-label="Fragment toru wokół auta"></canvas>
+  </section>
+
+  <section class="widget" id="w-tips" data-name="Wskazówki" aria-label="Wskazówki">
+    <div class="w-title">WSKAZÓWKI <span id="tips-lap" class="muted"></span></div>
+    <div id="tips-body" class="tips-body"><span class="muted">Pojawią się po okrążeniu.</span></div>
+  </section>
+
+  <section class="widget" id="w-msg" data-name="Instruktor" aria-label="Wiadomości od instruktora">
+    <div class="w-title accent">INSTRUKTOR</div>
+    <div id="msg-goal" class="msg-goal"></div>
+    <div id="msg-text" class="msg-text"></div>
+  </section>
+</main>
+
+<script src="overlay.js"></script>
+</body>
+</html>
