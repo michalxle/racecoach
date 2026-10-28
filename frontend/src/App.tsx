@@ -1131,7 +1131,12 @@ function Stations({
                 </span>
                 <button
                   className="text-button"
-                  disabled={!s.online || s.state.game !== "idle" || !!s.attempt}
+                  disabled={
+                    !s.online ||
+                    s.state.game !== "idle" ||
+                    !!s.attempt ||
+                    !s.state.capabilities?.includes("hardware.profile")
+                  }
                   onClick={() => onModal({ kind: "profile", id: s.id })}
                 >
                   <SlidersHorizontal size={14} />
@@ -2347,8 +2352,8 @@ function FormModal({
     water: "0",
     time: "13:00",
     profile: "off",
-    degrees: String(station?.state.hardware?.degrees || 900),
-    strength: String(station?.state.hardware?.strength || 15),
+    degrees: String(station?.state.hardware?.degrees ?? 900),
+    strength: String(station?.state.hardware?.strength ?? 15),
     goal: "",
     criteria: "Ocena instruktora i trzy powtarzalne okrążenia.",
     scheduled: "",
