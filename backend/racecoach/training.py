@@ -165,7 +165,7 @@ def register_training_routes(app, db):
             run = require_row(db, "runs", run_id)
             if run["status"] in ("completed", "interrupted"):
                 return {"ok": True}
-            for p in db.all("SELECT * FROM attempts WHERE run_id=? AND status IN ('preparing','running','stopping')", (run_id,)):
+            for p in db.all("SELECT * FROM attempts WHERE run_id=? AND status NOT IN ('completed','interrupted')", (run_id,)):
                 enqueue(c, p["station_id"], "stop_session", {"run_id": run_id, "attempt_id": p["id"]})
                 c.execute("UPDATE attempts SET status='stopping' WHERE id=?", (p["id"],))
             c.execute("UPDATE commands SET status='rejected',result=? WHERE kind IN ('start_session','prepare_session') AND json_extract(payload,'$.run_id')=? AND status IN ('queued','accepted')", (dump({"error": "Anulowane przez instruktora"}), run_id))
