@@ -39,7 +39,7 @@ def register_routes(app, db):
         row = db.one("SELECT content,overlay FROM stations WHERE id=?", (source["id"],))
         # Agent porównuje skrót katalogu i wysyła go ponownie, gdy centrala go nie ma (np. nowa baza).
         return {"server_time": time.time(), "content_hash": json.loads(row["content"] or "{}").get("hash"),
-                "overlay": json.loads(row["overlay"] or "{}")}
+                "overlay": json.loads(row["overlay"] or "{}"), "rivals": rivals(db, source["id"])}
 
     @app.get("/api/agent/commands")
     def poll_commands(source=Depends(station)):
@@ -60,6 +60,23 @@ def register_routes(app, db):
     from .coaching import register_coaching_routes, register_overlay_routes
     register_coaching_routes(app, db)
     register_overlay_routes(app, db)
+
+
+def rivals(db, station_id):
+    """Pozycje pozostałych uczestników tej samej sesji (do minimapy w grze), z ostatniego heartbeatu."""
+    own = db.one("SELECT a.run_id,r.scenario FROM attempts a JOIN runs r ON r.id=a.run_id WHERE a.station_id=? "
+                 "AND a.status IN ('ready','running') ORDER BY a.created DESC LIMIT 1", (station_id,))
+    if not own or not json.loads(own["scenario"]).get("show_rivals", True):
+        return []
+    result = []
+    for other in db.all("SELECT a.station_id,u.name,s.state,s.last_seen FROM attempts a JOIN users u ON u.id=a.trainee_id "
+                        "JOIN stations s ON s.id=a.station_id WHERE a.run_id=? AND a.station_id!=? AND a.status='running'",
+                        (own["run_id"], station_id)):
+        live = json.loads(other["state"]).get("telemetry") or {}
+        if other["last_seen"] and time.time() - other["last_seen"] < 5 and live.get("x") is not None and live.get("z") is not None:
+            result.append({"name": other["name"], "x": live["x"], "z": live["z"], "progress": live.get("progress"),
+                           "lap": live.get("lap")})
+    return result
 
 
 def apply_command_result(db, station_id, command_id, status, result):

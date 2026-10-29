@@ -108,13 +108,19 @@ class Database:
             if "game_id" not in {row[1] for row in self.connection.execute("PRAGMA table_info(tracks)")}:
                 self.connection.execute("ALTER TABLE tracks ADD COLUMN game_id TEXT")
                 self.connection.execute("UPDATE tracks SET game_id=id")
-            if "hardware_profile" not in {row[1] for row in self.connection.execute("PRAGMA table_info(exercises)")}:
+            exercise_columns = {row[1] for row in self.connection.execute("PRAGMA table_info(exercises)")}
+            if "hardware_profile" not in exercise_columns:
                 self.connection.execute("ALTER TABLE exercises ADD COLUMN hardware_profile TEXT")
+            # archived: scenariusz ukryty po usunięciu (ma historię); kind: 'scenario' albo 'quick' (szybki przejazd).
+            if "archived" not in exercise_columns:
+                self.connection.execute("ALTER TABLE exercises ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            if "kind" not in exercise_columns:
+                self.connection.execute("ALTER TABLE exercises ADD COLUMN kind TEXT NOT NULL DEFAULT 'scenario'")
             station_columns = {row[1] for row in self.connection.execute("PRAGMA table_info(stations)")}
             for column in ("content", "overlay"):
                 if column not in station_columns:
                     self.connection.execute(f"ALTER TABLE stations ADD COLUMN {column} TEXT NOT NULL DEFAULT '{{}}'")
-            self.connection.execute("PRAGMA user_version=5")
+            self.connection.execute("PRAGMA user_version=6")
             self.connection.commit()
 
     @contextmanager

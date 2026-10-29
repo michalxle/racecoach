@@ -9,6 +9,8 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--data", default=None)
     args = parser.parse_args()
+    # Serwer AC podaje stanowiskom adres skryptów CSP centrali (np. jazda bez kolizji).
+    os.environ["RACECOACH_PORT"] = str(args.port)
     import uvicorn
     from .app import create_app
     uvicorn.run(create_app(args.data, demo=args.demo), host=args.host, port=args.port, access_log=False)

@@ -1,0 +1,934 @@
+From f937555a495661c483c0b2004cd22d1b1e9f2354 Mon Sep 17 00:00:00 2001
+From: Kamil <camildo7@gmail.com>
+Date: Thu, 29 Oct 2026 13:29:59 +0100
+Subject: [PATCH] Deszcz w sesjach grupowych na AssettoServer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Centrala rozpoznaje AssettoServer.exe jako serwer sesji grupowych z pogodą
+CSP WeatherFX: zapisuje typ pogody w GRAPHICS, włącza EnableWeatherFx i RCON
+w extra_cfg.yml, a deszcz, mokrość i wodę ustawia przez RCON (setrain) na
+starcie i przy "Zmień warunki" (płynne przejście krokami co 1 s).
+acServer.exe od Kunos nadal odmawia scenariusza z deszczem.
+
+- agent przyjmuje deszcz w sesji grupowej, gdy serwer ma csp_weather
+  i stanowisko ma CSP z WeatherFX
+- deszcz zawsze wymaga CSP na stanowisku, także w trybie grupowym
+- wyścig wirtualny zmienia pogodę na każdym stanowisku
+- START-RaceCoach.bat -AcServer / -AcServerHost / -NoAcServer
+- testy: RCON, konfiguracja serwera, routing pogody, agent
+- dokumentacja konfiguracji AssettoServer
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VBovg3pSWuNGvUAQ4LaMxt
+---
+ .env.example                        |   4 +
+ README.md                           |   2 +-
+ URUCHOMIENIE-LOKALNE.md             |   9 +-
+ agent/racecoach_agent/launcher.py   |  11 +-
+ backend/racecoach/server_manager.py | 241 ++++++++++++++++++++++++++--
+ backend/racecoach/training.py       |  29 ++--
+ backend/tests/test_server_rain.py   | 186 +++++++++++++++++++++
+ backend/tests/test_weather_live.py  |  77 +++++++++
+ docs/windows-station.md             |  36 ++++-
+ scripts/local-start.ps1             |  38 ++++-
+ 10 files changed, 605 insertions(+), 28 deletions(-)
+ create mode 100644 backend/tests/test_server_rain.py
+
+diff --git a/.env.example b/.env.example
+index da97376..84310a4 100644
+--- a/.env.example
++++ b/.env.example
+@@ -7,6 +7,10 @@ RACECOACH_SERVER_DIR=
+ RACECOACH_SERVER_EXECUTABLE=
+ RACECOACH_SERVER_HOST=
+ RACECOACH_SERVER_PORT=9600
++# kunos | assettoserver; puste = wykrycie po nazwie pliku (AssettoServer.exe obsługuje deszcz CSP):
++RACECOACH_SERVER_KIND=
++# Lokalny port RCON AssettoServer do sterowania deszczem (tylko 127.0.0.1):
++RACECOACH_SERVER_RCON_PORT=9610
+ # Opcjonalny, samodzielnie wdrożony most do kontrolera CSP:
+ RACECOACH_WEATHER_BRIDGE=
+ RACECOACH_WEATHER_TOKEN=
+diff --git a/README.md b/README.md
+index 3dad03d..96972d9 100644
+--- a/README.md
++++ b/README.md
+@@ -272,7 +272,7 @@ Stan `unknown` wymaga sprawdzenia lokalnego procesu i konfiguracji, zanim zwolni
+ | Nieaktywna zmiana profilu / brak bazy | Agent z `--hardware`, osobny `wheel-control`, zależności `[hardware]`, połączenie USB i brak drugiego właściciela COM/HID. |
+ | Brak porównania lub błędna mapa | Pełne okrążenia bez luk, zgodny tor/layout i wersja geometrii, poprawne granice sekcji względem postępu gry. |
+ | Zwykła pogoda i pora dnia | Adapter generuje konfigurację początkową; zakres 08:00–18:00. Status `configuration_only` wymaga sprawdzenia w grze, zwłaszcza przy Pure/Sol/CSP. |
+-| Deszcz / zmiana pogody podczas jazdy | Trening indywidualny: CSP z włączonym WeatherFX na stanowisku — agent instaluje kontroler `racecoach` i zmienia deszcz, mokrość i wodę z potwierdzeniem z gry ([szczegóły](URUCHOMIENIE-LOKALNE.md#co-system-potrafi)). Sesja grupowa: most pogodowy serwera ([kontrakt](docs/windows-station.md#pogoda-i-csp)). Bez CSP agent odmawia startu scenariusza z deszczem. |
++| Deszcz / zmiana pogody podczas jazdy | Trening indywidualny: CSP z włączonym WeatherFX na stanowisku — agent instaluje kontroler `racecoach` i zmienia deszcz, mokrość i wodę z potwierdzeniem z gry ([szczegóły](URUCHOMIENIE-LOKALNE.md#co-system-potrafi)). Sesja grupowa: AssettoServer z CSP WeatherFX — start w deszczu i zmiana warunków przez RCON ([instrukcja](docs/windows-station.md#deszcz-w-sesji-grupowej-assettoserver)); wyścig wirtualny: kontroler na każdym stanowisku. Bez CSP agent odmawia startu scenariusza z deszczem. |
+ | Pedały i kierownica ESP32 | Odczyt osi/przycisków przez WinMM; zdalny zapis parametrów firmware wymaga dodatkowego protokołu i implementacji. |
+ 
+ Testy automatyczne zastępują proces gry i urządzenia obiektami testowymi. **Nie potwierdzają
+diff --git a/URUCHOMIENIE-LOKALNE.md b/URUCHOMIENIE-LOKALNE.md
+index 141a961..29a0a41 100644
+--- a/URUCHOMIENIE-LOKALNE.md
++++ b/URUCHOMIENIE-LOKALNE.md
+@@ -80,8 +80,9 @@ automatycznie w Edge przy starcie sesji (przydatne przy osobnym monitorze stanow
+ 
+ **Wyścig:** w „Przygotuj sesję” wybierz „Wyścig na liczbę okrążeń”. Po ostatnim okrążeniu stanowisko
+ kończy sesję, a panel pokazuje klasyfikację (okrążenia, łączny czas, strata, najlepsze okrążenie). W trybie
+-grupowym bez skonfigurowanego serwera AC każdy jedzie na swoim stanowisku (wyścig wirtualny), z serwerem —
+-na wspólnym torze.
++grupowym bez skonfigurowanego serwera AC każdy jedzie na swoim stanowisku (wyścig wirtualny, deszcz działa
++lokalnie na każdym stanowisku), z serwerem — na wspólnym torze. Deszcz na wspólnym torze wymaga AssettoServer
++(`-AcServer`, [instrukcja](docs/windows-station.md#deszcz-w-sesji-grupowej-assettoserver)).
+ 
+ Kolejne uruchomienia: tylko `START-RaceCoach.bat` — instalacja, ścieżki i token stanowiska są zapamiętane.
+ 
+@@ -111,6 +112,8 @@ Parametry dopisuje się po nazwie pliku w PowerShell/cmd, np. `START-RaceCoach.b
+ | `-Port 8002` | Inny port panelu (gdy 8000 jest zajęty). Podaj ten sam port dla `PRZYGOTUJ-SCENARIUSZ.bat`. |
+ | `-Hardware openffboard` / `ffbeast` `-DDControl "C:\sim_soft\wheel-control"` `-MaxStrength 25` | Zdalne profile bazy DD przez projekt `wheel-control`. Zamknij wtedy GUI DD Control/Configurator. Bez tego gra używa kierownicy normalnie. |
+ | `-Lan` | Udostępnia panel w sieci lokalnej (np. tablet instruktora, drugie stanowisko). Wymaga zgody w zaporze. |
++| `-AcServer "C:\RaceCoachServer"` | Folder osobnej instalacji serwera do sesji grupowych na wspólnym torze (z `AssettoServer.exe` — także deszcz). Zapamiętywany; używaj z `-Lan`. Wyłączenie: `-NoAcServer`. |
++| `-AcServerHost 192.168.x.x` | Adres serwera dla stanowisk, gdy automatyczne wykrycie IP wybierze złą kartę sieciową. |
+ | `-NewStation` | Rejestruje stanowisko od nowa (nowy token). |
+ | `-NoOverlayWindow` | Bez okna nakładek nad grą (i bez instalacji PySide6); zostają aplikacje RaceCoach w grze. |
+ | `-Kiosk` | Przy starcie sesji otwiera ekran kierowcy w Edge na pełnym ekranie. |
+@@ -156,7 +159,7 @@ Parametry dopisuje się po nazwie pliku w PowerShell/cmd, np. `START-RaceCoach.b
+ 
+ **Ograniczenia na jednym komputerze**
+ - Tylko jedno stanowisko (jeden agent na komputer). Sesje grupowe wymagają drugiego komputera i osobnej
+-  instalacji serwera AC — obejrzysz je w trybie demo. Pogoda w sesji grupowej wymaga mostu serwera.
++  instalacji serwera AC — obejrzysz je w trybie demo. Deszcz na wspólnym serwerze wymaga AssettoServer.
+ - Godziny 08:00–18:00.
+ - Sekcje toru z importu to równe odcinki, nie zakręty — popraw je w JSON (`.local\live\tracks\`),
+   zmień `id` i zaimportuj w **Scenariusze → Importuj tor**.
+diff --git a/agent/racecoach_agent/launcher.py b/agent/racecoach_agent/launcher.py
+index 7bb1abb..ebe8a00 100644
+--- a/agent/racecoach_agent/launcher.py
++++ b/agent/racecoach_agent/launcher.py
+@@ -75,10 +75,13 @@ class Launcher:
+         if not 8 * 60 <= hour * 60 + minute <= 18 * 60:
+             raise RuntimeError("Podstawowy adapter obsługuje godziny 08:00–18:00; pozostałe wymagają adaptera CSP")
+         live_weather = scenario["mode"] != "multiplayer" and self.weather.available()
++        # W sesji grupowej deszcz przychodzi z AssettoServer przez CSP; lokalnego kontrolera nie instalujemy.
++        server_weather = scenario["mode"] == "multiplayer" and bool((scenario.get("connection") or {}).get("csp_weather"))
+         if scenario["conditions"].get("rain", 0) and not live_weather:
+-            if scenario["mode"] == "multiplayer":
+-                raise RuntimeError("Deszcz w sesji grupowej wymaga mostu pogodowego serwera; nie zostanie uruchomiony jako suchy")
+-            raise RuntimeError("Deszcz wymaga Custom Shaders Patch z włączonym WeatherFX (folder extension w grze); nie zostanie uruchomiony jako suchy")
++            if scenario["mode"] == "multiplayer" and not server_weather:
++                raise RuntimeError("Deszcz w sesji grupowej wymaga AssettoServer z CSP WeatherFX na komputerze centrali; nie zostanie uruchomiony jako suchy")
++            if not self.weather.available():
++                raise RuntimeError("Deszcz wymaga Custom Shaders Patch z włączonym WeatherFX (folder extension w grze); nie zostanie uruchomiony jako suchy")
+         if self.backup.exists() or self.existed.exists() or self.weather.pending_restore():
+             raise RuntimeError("Pozostała kopia konfiguracji po poprzednim uruchomieniu. Uruchom agenta z --restore-config po zamknięciu gry")
+         if scenario["mode"] == "multiplayer" and not scenario.get("connection"):
+@@ -165,6 +168,8 @@ class Launcher:
+                         actual["conditions_requested"] = scenario["conditions"]
+                         actual["conditions_confirmation"] = "configuration_only"
+                         actual["weather_control"] = False
++                        if scenario["mode"] == "multiplayer" and (scenario.get("connection") or {}).get("csp_weather"):
++                            actual["conditions_confirmation"] = "server_csp"
+                         if self.weather_active:
+                             state = self.weather.confirm_start()
+                             if state is not None:
+diff --git a/backend/racecoach/server_manager.py b/backend/racecoach/server_manager.py
+index 322cd64..7361f8f 100644
+--- a/backend/racecoach/server_manager.py
++++ b/backend/racecoach/server_manager.py
+@@ -1,19 +1,135 @@
+ """A dedicated AC server folder is explicitly configured by the operator.
+ 
+-No shell commands are accepted from the panel. Runtime weather is a separate bridge
+-contract; an unconfigured bridge fails explicitly instead of reporting success.
++No shell commands are accepted from the panel. Two server programs are supported:
++
++* the original Kunos ``acServer.exe`` - dry sessions only;
++* AssettoServer (``AssettoServer.exe``) - CSP WeatherFX weather, so a group session can start
++  in the rain and the instructor can change rain, wetness and water while people drive.
++  RaceCoach talks to it over its Source RCON port with the ``setrain`` admin command.
++
++Runtime weather for Kunos servers still uses the separate bridge contract; an unconfigured
++bridge fails explicitly instead of reporting success.
+ """
+ from __future__ import annotations
+ 
+ import configparser
++import logging
+ import os
++import re
++import secrets
+ import shutil
++import socket
++import struct
+ import subprocess
+ import threading
++import time
+ from pathlib import Path
+ 
+ import httpx
+ 
++log = logging.getLogger(__name__)
++
++KUNOS, ASSETTOSERVER = "kunos", "assettoserver"
++DEFAULT_RCON_PORT = 9610
++
++# AssettoServer.Shared.Weather.WeatherFxType (numeric ids used in GRAPHICS=..._type=<id>).
++FX_TYPES = {"LightDrizzle": 3, "Drizzle": 4, "HeavyDrizzle": 5, "LightRain": 6, "Rain": 7, "HeavyRain": 8,
++            "Clear": 15, "FewClouds": 16, "ScatteredClouds": 17, "BrokenClouds": 18, "OvercastClouds": 19,
++            "Fog": 20, "Mist": 21}
++
++
++def fx_weather_type(weather, rain):
++    """Typ pogody WeatherFX dla pakietu nieba z gry i deszczu ze scenariusza.
++
++    Typ ustala chmury i obraz nieba; dokładną intensywność deszczu ustawia potem ``setrain``.
++    """
++    if rain > 0:
++        if rain < .15:
++            return FX_TYPES["Drizzle"]
++        if rain < .45:
++            return FX_TYPES["LightRain"]
++        if rain < .8:
++            return FX_TYPES["Rain"]
++        return FX_TYPES["HeavyRain"]
++    name = weather.lower()
++    for keys, fx in ((("heavy_fog",), "Fog"), (("fog",), "Mist"), (("heavy_clouds", "overcast"), "OvercastClouds"),
++                     (("mid_clouds", "broken"), "BrokenClouds"), (("light_clouds", "scattered"), "ScatteredClouds"),
++                     (("mid_clear", "few_clouds"), "FewClouds")):
++        if any(k in name for k in keys):
++            return FX_TYPES[fx]
++    return FX_TYPES["Clear"]
++
++
++def start_rain(conditions):
++    """Warunki startowe deszczu - te same co na stanowisku (agent csp_weather.start_conditions)."""
++    rain = max(0.0, min(1.0, float(conditions.get("rain", 0) or 0)))
++    wetness = conditions.get("wetness")
++    water = conditions.get("water")
++    return {"rain": rain,
++            "wetness": min(1.0, rain * 4) if wetness is None else float(wetness),
++            "water": rain if water is None else float(water)}
++
++
++def set_yaml_keys(text, values):
++    """Ustawia klucze najwyższego poziomu w extra_cfg.yml, zachowując resztę pliku i komentarze."""
++    lines = text.splitlines()
++    for key, value in values.items():
++        pattern = re.compile(rf"^{re.escape(key)}\s*:")
++        for i, line in enumerate(lines):
++            if pattern.match(line):
++                lines[i] = f"{key}: {value}"
++                break
++        else:
++            lines.append(f"{key}: {value}")
++    return "\n".join(lines) + "\n"
++
++
++class RconError(RuntimeError):
++    pass
++
++
++class Rcon:
++    """Minimalny klient Source RCON (AssettoServer: RconPort w extra_cfg.yml, hasło = ADMIN_PASSWORD)."""
++    AUTH, EXEC, AUTH_RESPONSE = 3, 2, 2
++
++    def __init__(self, host, port, password, timeout=3.0):
++        self.host, self.port, self.password, self.timeout = host, port, password, timeout
++
++    @staticmethod
++    def _packet(request_id, kind, body):
++        payload = struct.pack("<ii", request_id, kind) + body.encode("ascii") + b"\x00\x00"
++        return struct.pack("<i", len(payload)) + payload
++
++    @staticmethod
++    def _read_exact(sock, size):
++        data = b""
++        while len(data) < size:
++            chunk = sock.recv(size - len(data))
++            if not chunk:
++                raise RconError("Serwer zamknął połączenie RCON")
++            data += chunk
++        return data
++
++    def _read(self, sock):
++        (size,) = struct.unpack("<i", self._read_exact(sock, 4))
++        if not 8 <= size <= 65536:
++            raise RconError("Niepoprawna odpowiedź RCON")
++        data = self._read_exact(sock, size)
++        request_id, kind = struct.unpack("<ii", data[:8])
++        return request_id, kind, data[8:].split(b"\x00", 1)[0].decode("ascii", "replace")
++
++    def command(self, command):
++        with socket.create_connection((self.host, self.port), timeout=self.timeout) as sock:
++            sock.sendall(self._packet(1, self.AUTH, self.password))
++            request_id, kind, _ = self._read(sock)
++            if kind != self.AUTH_RESPONSE or request_id != 1:
++                raise RconError("Serwer odrzucił hasło RCON (ADMIN_PASSWORD)")
++            sock.sendall(self._packet(2, self.EXEC, command))
++            while True:
++                request_id, _, body = self._read(sock)
++                if request_id == 2:
++                    return body
++
+ 
+ class ServerManager:
+     def __init__(self, data_dir):
+@@ -23,11 +139,37 @@ class ServerManager:
+         self.run_id = None
+         self.lock = threading.Lock()
+         self.backups = []
++        self.rcon = None
++        self.rain = None
++        self.rain_thread = None
++        self.rain_generation = 0
++        self.rain_status = None
+ 
+     @property
+     def configured(self):
+         return bool(os.getenv("RACECOACH_SERVER_DIR") and os.getenv("RACECOACH_SERVER_EXECUTABLE") and os.getenv("RACECOACH_SERVER_HOST"))
+ 
++    @property
++    def kind(self):
++        """Rodzaj serwera: RACECOACH_SERVER_KIND albo nazwa pliku wykonywalnego (AssettoServer.exe)."""
++        explicit = (os.getenv("RACECOACH_SERVER_KIND") or "").strip().lower()
++        if explicit in (KUNOS, ASSETTOSERVER):
++            return explicit
++        return ASSETTOSERVER if Path(os.getenv("RACECOACH_SERVER_EXECUTABLE", "")).name.lower().startswith("assettoserver") else KUNOS
++
++    @property
++    def rain_supported(self):
++        return self.configured and self.kind == ASSETTOSERVER
++
++    @property
++    def live_weather(self):
++        """Czy w sesji grupowej można zmieniać pogodę podczas jazdy."""
++        return self.rain_supported or bool(os.getenv("RACECOACH_WEATHER_BRIDGE") and os.getenv("RACECOACH_WEATHER_TOKEN"))
++
++    @property
++    def rcon_port(self):
++        return int(os.getenv("RACECOACH_SERVER_RCON_PORT", str(DEFAULT_RCON_PORT)))
++
+     def start(self, run_id, scenario, participants):
+         with self.lock:
+             if not self.configured:
+@@ -38,7 +180,8 @@ class ServerManager:
+             binary = Path(os.environ["RACECOACH_SERVER_EXECUTABLE"]).resolve()
+             if not binary.is_file() or not (folder / "cfg").is_dir():
+                 raise RuntimeError("Niepoprawna instalacja dedykowanego serwera AC")
+-            cfg_path, entry_path = folder / "cfg/server_cfg.ini", folder / "cfg/entry_list.ini"
++            kind = self.kind
++            cfg_path, entry_path, extra_path = folder / "cfg/server_cfg.ini", folder / "cfg/entry_list.ini", folder / "cfg/extra_cfg.yml"
+             if not cfg_path.exists():
+                 raise RuntimeError("Brak bazowego cfg/server_cfg.ini; przygotuj oddzielną instalację serwera")
+             config = configparser.ConfigParser(interpolation=None)
+@@ -63,9 +206,16 @@ class ServerManager:
+             if not 8 * 60 <= hour * 60 + minute <= 18 * 60:
+                 raise RuntimeError("Bazowy serwer obsługuje godziny dzienne; pozostałe wymagają integracji CSP")
+             server["SUN_ANGLE"] = str(round((hour + minute / 60 - 13) * 16))
+-            if conditions["rain"]:
+-                raise RuntimeError("Deszcz wymaga skonfigurowanej integracji CSP; bazowy serwer nie potwierdza tego scenariusza")
+-            config["WEATHER_0"] = {"GRAPHICS": conditions["weather"], "BASE_TEMPERATURE_AMBIENT": str(conditions["air_temp"]),
++            rain = start_rain(conditions)
++            graphics = conditions["weather"]
++            if kind == ASSETTOSERVER:
++                # AssettoServer czyta typ WeatherFX z GRAPHICS ("3_clear_type=7"); bez niego nie ma deszczu ani przejść.
++                graphics = f"{conditions['weather']}_type={fx_weather_type(conditions['weather'], rain['rain'])}"
++                server["ADMIN_PASSWORD"] = secrets.token_urlsafe(18)
++            elif rain["rain"]:
++                raise RuntimeError("Deszcz w sesji grupowej wymaga AssettoServer z CSP WeatherFX; acServer.exe od Kunos nie obsługuje deszczu. "
++                                   "Ustaw RACECOACH_SERVER_EXECUTABLE na AssettoServer.exe (instrukcja: docs/windows-station.md)")
++            config["WEATHER_0"] = {"GRAPHICS": graphics, "BASE_TEMPERATURE_AMBIENT": str(conditions["air_temp"]),
+                                    "BASE_TEMPERATURE_ROAD": str(conditions["road_temp"] - conditions["air_temp"]), "VARIATION_AMBIENT": "0", "VARIATION_ROAD": "0",
+                                    "WIND_BASE_SPEED_MIN": "0", "WIND_BASE_SPEED_MAX": "0", "WIND_BASE_DIRECTION": "0", "WIND_VARIATION_DIRECTION": "0"}
+             config["DYNAMIC_TRACK"] = {"SESSION_START": str(conditions["grip"] * 100), "RANDOMNESS": "0", "LAP_GAIN": "0", "SESSION_TRANSFER": "100"}
+@@ -77,7 +227,8 @@ class ServerManager:
+             self.backups = []
+             backup_dir = self.data_dir / "server-backups" / run_id
+             backup_dir.mkdir(parents=True, exist_ok=True)
+-            for path in (cfg_path, entry_path):
++            managed = (cfg_path, entry_path, extra_path) if kind == ASSETTOSERVER else (cfg_path, entry_path)
++            for path in managed:
+                 backup = backup_dir / path.name
+                 if path.exists():
+                     shutil.copy2(path, backup)
+@@ -89,19 +240,31 @@ class ServerManager:
+                     config.write(f, space_around_delimiters=False)
+                 with entry_path.open("w", encoding="utf-8") as f:
+                     entries.write(f, space_around_delimiters=False)
++                if kind == ASSETTOSERVER:
++                    extra = extra_path.read_text(encoding="utf-8-sig") if extra_path.exists() else ""
++                    extra_path.write_text(set_yaml_keys(extra, {"EnableWeatherFx": "true", "RconPort": str(self.rcon_port)}), encoding="utf-8")
+                 self.log = (backup_dir / "server.log").open("ab")
+                 self.process = subprocess.Popen([str(binary)], cwd=folder, stdout=self.log, stderr=subprocess.STDOUT)
+                 self.run_id = run_id
+             except Exception:
+                 self._restore()
+                 raise
+-            return {"host": os.environ["RACECOACH_SERVER_HOST"], "port": port,
+-                    "http_port": int(server.get("HTTP_PORT", "8081")), "password": server.get("PASSWORD", "")}
++            connection = {"host": os.environ["RACECOACH_SERVER_HOST"], "port": port,
++                          "http_port": int(server.get("HTTP_PORT", "8081")), "password": server.get("PASSWORD", "")}
++            self.rcon = self.rain = self.rain_status = None
++            if kind == ASSETTOSERVER:
++                connection["csp_weather"] = True
++                self.rcon = Rcon("127.0.0.1", self.rcon_port, server["ADMIN_PASSWORD"])
++                self.rain = {"rain": 0.0, "wetness": 0.0, "water": 0.0}
++                # Serwer startuje kilka sekund; dokładne wartości ustawiamy w tle, gdy RCON zacznie odpowiadać.
++                self._schedule_rain(rain, transition=0, wait_for_server=90)
++            return connection
+ 
+     def stop(self, run_id=None):
+         with self.lock:
+             if run_id and self.run_id != run_id:
+                 return
++            self.rain_generation += 1
+             if self.process and self.process.poll() is None:
+                 self.process.terminate()
+                 try:
+@@ -111,6 +274,7 @@ class ServerManager:
+                     self.process.wait(timeout=5)
+             self.process = None
+             self.run_id = None
++            self.rcon = None
+             self._restore()
+ 
+     def _restore(self):
+@@ -124,7 +288,66 @@ class ServerManager:
+                 path.unlink()
+         self.backups = []
+ 
++    # ---------- deszcz na AssettoServer ----------
++    def _send_rain(self, rcon, values):
++        """``setrain <intensywność> <mokrość> <woda>``; potwierdzeniem jest odpowiedź serwera."""
++        numbers = [f"{max(0.0, min(1.0, values[k])):.3f}" for k in ("rain", "wetness", "water")]
++        reply = rcon.command("setrain " + " ".join(numbers))
++        if "rain has been set" not in reply.lower():
++            # Serwer z polskimi ustawieniami regionalnymi może oczekiwać przecinka dziesiętnego.
++            reply = rcon.command("setrain " + " ".join(n.replace(".", ",") for n in numbers))
++        if "rain has been set" not in reply.lower():
++            raise RconError("Serwer nie potwierdził zmiany deszczu: " + (reply.strip() or "brak odpowiedzi"))
++
++    def _schedule_rain(self, target, transition, wait_for_server=0):
++        """Ustawia deszcz od razu albo płynnie przez ``transition`` sekund (krok co 1 s)."""
++        self.rain_generation += 1
++        generation, rcon, start = self.rain_generation, self.rcon, dict(self.rain or target)
++        self.rain_status = {"state": "pending", "target": target}
++
++        def run():
++            deadline = time.monotonic() + wait_for_server
++            steps = max(1, int(round(transition)))
++            try:
++                for step in range(1, steps + 1):
++                    share = step / steps
++                    values = {k: start[k] + (target[k] - start[k]) * share for k in target}
++                    while True:
++                        if generation != self.rain_generation:
++                            return
++                        try:
++                            self._send_rain(rcon, values)
++                            break
++                        except (OSError, RconError):
++                            if time.monotonic() >= deadline:
++                                raise
++                            time.sleep(1)
++                    self.rain = values
++                    if step < steps:
++                        time.sleep(1)
++                if generation == self.rain_generation:
++                    self.rain_status = {"state": "applied", "target": target}
++            except Exception as exc:
++                log.error("Deszcz na serwerze AC nie został ustawiony: %s", exc)
++                if generation == self.rain_generation:
++                    self.rain_status = {"state": "failed", "target": target, "error": str(exc)}
++
++        if transition <= 0 and not wait_for_server:
++            run()
++            if self.rain_status["state"] == "failed":
++                raise RconError(self.rain_status["error"])
++            return
++        self.rain_thread = threading.Thread(target=run, name="racecoach-server-rain", daemon=True)
++        self.rain_thread.start()
++
+     def weather(self, run_id, payload):
++        if self.rcon is not None and self.run_id == run_id and self.process and self.process.poll() is None:
++            target = {k: max(0.0, min(1.0, float(payload[k]))) for k in ("rain", "wetness", "water")}
++            transition = float(payload.get("transition", 30) or 0)
++            # Pierwszy krok wysyłamy od razu, żeby odpowiedź serwera potwierdziła, że RCON działa.
++            self._send_rain(self.rcon, dict(self.rain or target) if transition > 0 else target)
++            self._schedule_rain(target, transition)
++            return {"confirmed": True, **target, "transition_s": transition, "source": "assettoserver_rcon"}
+         bridge = os.getenv("RACECOACH_WEATHER_BRIDGE")
+         secret = os.getenv("RACECOACH_WEATHER_TOKEN")
+         if not bridge or not secret:
+diff --git a/backend/racecoach/training.py b/backend/racecoach/training.py
+index eb9adae..d2ea399 100644
+--- a/backend/racecoach/training.py
++++ b/backend/racecoach/training.py
+@@ -24,13 +24,16 @@ def enqueue(c, station_id, kind, payload, ttl=90):
+ WEATHER_CAPABILITIES = {"weather.csp", "weather.demo"}
+ 
+ 
+-def weather_control(mode, capabilities):
+-    """Czy sesję można zmieniać na żywo: kontroler CSP na stanowisku, demo albo most serwera grupowego."""
++def weather_control(mode, capabilities, server_live=False):
++    """Czy sesję można zmieniać na żywo: kontroler CSP na stanowisku, demo, AssettoServer albo most serwera grupowego.
++
++    ``mode`` to tryb scenariusza: wyścig wirtualny ma tryb ``individual`` (każde stanowisko ma własną pogodę).
++    """
+     if capabilities and all("weather.demo" in caps for caps in capabilities):
+         return True
+     if mode == "individual":
+         return bool(capabilities) and all(WEATHER_CAPABILITIES & set(caps) for caps in capabilities)
+-    return bool(os.getenv("RACECOACH_WEATHER_BRIDGE") and os.getenv("RACECOACH_WEATHER_TOKEN"))
++    return bool(server_live or (os.getenv("RACECOACH_WEATHER_BRIDGE") and os.getenv("RACECOACH_WEATHER_TOKEN")))
+ 
+ 
+ def decode_track(row):
+@@ -111,10 +114,11 @@ def register_training_routes(app, db):
+         rows = db.all("SELECT r.*,e.title FROM runs r JOIN exercises e ON e.id=r.exercise_id ORDER BY r.created DESC LIMIT 100")
+         for row in rows:
+             row["scenario"] = json.loads(row["scenario"])
+-            row["scenario"].pop("connection", None)
++            server_weather = bool((row["scenario"].pop("connection", None) or {}).get("csp_weather"))
+             row["participants"] = db.all("SELECT a.id,a.status,a.station_id,a.trainee_id,u.name AS trainee_name,s.name AS station_name FROM attempts a JOIN users u ON u.id=a.trainee_id JOIN stations s ON s.id=a.station_id WHERE a.run_id=?", (row["id"],))
+             states = db.all("SELECT s.state FROM attempts a JOIN stations s ON s.id=a.station_id WHERE a.run_id=?", (row["id"],))
+-            row["weather_control"] = weather_control(row["mode"], [json.loads(s["state"]).get("capabilities", []) for s in states])
++            row["weather_control"] = weather_control(row["scenario"].get("mode", row["mode"]), [json.loads(s["state"]).get("capabilities", []) for s in states],
++                                                    server_weather and app.state.server_manager.live_weather)
+             if row["scenario"].get("race_laps"):
+                 from .coaching import classification
+                 row["classification"] = classification(db, row["id"], row["scenario"]["race_laps"])
+@@ -149,7 +153,8 @@ def register_training_routes(app, db):
+                 if item["status"] in ("passed", "skipped"):
+                     raise HTTPException(409, "Pozycja planu jest zamknięta; zmień status przed kolejną próbą")
+             rain = json.loads(exercise["conditions"]).get("rain", 0)
+-            if rain and not source["simulated"] and body.mode == "individual" and "weather.csp" not in state.get("capabilities", []):
++            # Deszcz zawsze wymaga CSP z WeatherFX na stanowisku: lokalnie steruje nim agent, w grupie - AssettoServer.
++            if rain and not source["simulated"] and "weather.csp" not in state.get("capabilities", []):
+                 raise HTTPException(409, "Stanowisko " + source["name"] + " nie ma Custom Shaders Patch z WeatherFX; deszcz jest niedostępny")
+             if not source["simulated"]:
+                 required = {f"track:{track['game_id']}:{track['layout']}", "car:" + exercise["car"]}
+@@ -251,14 +256,20 @@ def register_training_routes(app, db):
+         if run["status"] != "running":
+             raise HTTPException(409, "Zmiana pogody wymaga trwającej sesji")
+         participants = db.all("SELECT a.id AS attempt_id,a.station_id,a.status,s.simulated,s.state FROM attempts a JOIN stations s ON s.id=a.station_id WHERE a.run_id=?", (run_id,))
+-        if run["mode"] == "individual" and not all(p["simulated"] for p in participants):
+-            actual = change_station_weather(run_id, participants[0], body, actor)
++        scenario_mode = json.loads(run["scenario"]).get("mode", run["mode"])
++        if scenario_mode == "individual" and not all(p["simulated"] for p in participants):
++            # Trening indywidualny albo wyścig wirtualny: każde stanowisko zmienia własną pogodę CSP.
++            driving = participants if len(participants) == 1 else [p for p in participants if p["status"] == "running"]
++            if not driving:
++                raise HTTPException(409, "Żaden kursant nie jeździ w tej chwili")
++            results = [change_station_weather(run_id, p, body, actor) for p in driving]
++            actual = results[0] if len(results) == 1 else {"confirmed": True, **body.model_dump(), "stations": results}
+         elif not all(p["simulated"] for p in participants):
+             try:
+                 actual = app.state.server_manager.weather(run_id, body.model_dump())
+             except Exception as exc:
+                 db.audit(actor["id"], "weather.failed", run_id, {"error": str(exc)})
+-                raise HTTPException(409, "Most pogodowy nie potwierdził zmiany. Sprawdź konfigurację i dziennik")
++                raise HTTPException(409, "Serwer AC nie potwierdził zmiany pogody: " + str(exc))
+         else:
+             actual = {"confirmed": True, "simulated": True, **body.model_dump()}
+         db.audit(actor["id"], "weather.changed", run_id, actual)
+diff --git a/backend/tests/test_server_rain.py b/backend/tests/test_server_rain.py
+new file mode 100644
+index 0000000..a6e432a
+--- /dev/null
++++ b/backend/tests/test_server_rain.py
+@@ -0,0 +1,186 @@
++"""Deszcz w sesji grupowej: AssettoServer z CSP WeatherFX sterowany przez RCON."""
++import configparser
++import socket
++import struct
++import sys
++import threading
++import time
++from pathlib import Path
++
++import pytest
++
++from racecoach import server_manager as sm
++from racecoach.server_manager import Rcon, ServerManager, fx_weather_type, set_yaml_keys
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agent"))
++from racecoach_agent.launcher import Launcher
++
++
++class FakeRconServer:
++    """Serwer Source RCON zgodny z AssettoServer: hasło = ADMIN_PASSWORD, odpowiedź setrain."""
++
++    def __init__(self, password, comma_decimals=False):
++        self.password, self.comma_decimals = password, comma_decimals
++        self.commands = []
++        self.sock = socket.socket()
++        self.sock.bind(("127.0.0.1", 0))
++        self.sock.listen()
++        self.port = self.sock.getsockname()[1]
++        threading.Thread(target=self.serve, daemon=True).start()
++
++    def serve(self):
++        while True:
++            try:
++                conn, _ = self.sock.accept()
++            except OSError:
++                return
++            with conn:
++                authed = False
++                while True:
++                    head = conn.recv(4)
++                    if len(head) < 4:
++                        break
++                    (size,) = struct.unpack("<i", head)
++                    data = b""
++                    while len(data) < size:
++                        data += conn.recv(size - len(data))
++                    request_id, kind = struct.unpack("<ii", data[:8])
++                    body = data[8:-2].decode("ascii")
++                    if kind == 3:
++                        authed = body == self.password
++                        conn.sendall(self.packet(request_id if authed else -1, 2, ""))
++                        if not authed:
++                            break
++                    elif authed and kind == 2:
++                        self.commands.append(body)
++                        ok = ("," in body) if self.comma_decimals else ("." in body or body.endswith(" 0"))
++                        conn.sendall(self.packet(request_id, 0, "Rain has been set.\n" if ok else "Failed to parse parameter."))
++
++    @staticmethod
++    def packet(request_id, kind, body):
++        payload = struct.pack("<ii", request_id, kind) + body.encode("ascii") + b"\x00"
++        return struct.pack("<i", len(payload)) + payload
++
++    def close(self):
++        self.sock.close()
++
++
++def make_server(tmp_path, monkeypatch, executable="AssettoServer.exe"):
++    folder = tmp_path / "server"
++    (folder / "cfg").mkdir(parents=True)
++    binary = folder / executable
++    binary.write_bytes(b"test binary is never executed")
++    (folder / "cfg/server_cfg.ini").write_text("[SERVER]\nHTTP_PORT=8081\nNAME=Original\n")
++    monkeypatch.setenv("RACECOACH_SERVER_DIR", str(folder))
++    monkeypatch.setenv("RACECOACH_SERVER_EXECUTABLE", str(binary))
++    monkeypatch.setenv("RACECOACH_SERVER_HOST", "192.168.1.2")
++    monkeypatch.delenv("RACECOACH_SERVER_KIND", raising=False)
++
++    class Process:
++        def __init__(self, *args, **kwargs): self.stopped = False
++        def poll(self): return 0 if self.stopped else None
++        def terminate(self): self.stopped = True
++        def wait(self, timeout): return 0
++    monkeypatch.setattr(sm.subprocess, "Popen", Process)
++    return folder
++
++
++def scenario(rain):
++    return {"track_id": "magione", "layout": "", "car": "abarth500", "duration": 15,
++            "conditions": {"time": "13:30", "weather": "3_clear", "air_temp": 18, "road_temp": 20, "rain": rain, "grip": .98}}
++
++
++def test_weather_types_follow_rain_and_sky():
++    assert fx_weather_type("3_clear", 0) == 15
++    assert fx_weather_type("7_heavy_clouds", 0) == 19
++    assert fx_weather_type("1_heavy_fog", 0) == 20
++    assert fx_weather_type("3_clear", .1) == 4
++    assert fx_weather_type("3_clear", .3) == 6
++    assert fx_weather_type("3_clear", .6) == 7
++    assert fx_weather_type("3_clear", 1) == 8
++
++
++def test_yaml_keys_are_replaced_or_appended_without_touching_the_rest():
++    text = "# komentarz\nEnableWeatherFx: false\nEnablePlugins:\n  - Foo\n"
++    result = set_yaml_keys(text, {"EnableWeatherFx": "true", "RconPort": "9610"})
++    assert "EnableWeatherFx: true" in result and "RconPort: 9610" in result
++    assert "# komentarz" in result and "  - Foo" in result
++
++
++def test_kunos_server_still_refuses_rain_and_keeps_files(tmp_path, monkeypatch):
++    folder = make_server(tmp_path, monkeypatch, "acServer.exe")
++    manager = ServerManager(tmp_path / "data")
++    assert not manager.rain_supported
++    with pytest.raises(RuntimeError, match="AssettoServer"):
++        manager.start("run", scenario(.5), [object()])
++    assert "Original" in (folder / "cfg/server_cfg.ini").read_text()
++    assert not (folder / "cfg/extra_cfg.yml").exists()
++
++
++def test_assettoserver_starts_rain_over_rcon_and_restores_config(tmp_path, monkeypatch):
++    folder = make_server(tmp_path, monkeypatch)
++    (folder / "cfg/extra_cfg.yml").write_text("EnableWeatherFx: false\nEnableAi: false\n")
++    captured = {}
++    real_rcon = Rcon
++
++    def rcon_factory(host, port, password):
++        captured["server"] = FakeRconServer(password)
++        return real_rcon(host, captured["server"].port, password)
++    monkeypatch.setattr(sm, "Rcon", rcon_factory)
++    manager = ServerManager(tmp_path / "data")
++    assert manager.rain_supported and manager.live_weather
++    connection = manager.start("run", scenario(.6), [object(), object()])
++    assert connection["csp_weather"] is True
++    cfg = configparser.ConfigParser()
++    cfg.read(folder / "cfg/server_cfg.ini")
++    assert cfg["WEATHER_0"]["GRAPHICS"] == "3_clear_type=7"
++    assert cfg["SERVER"]["ADMIN_PASSWORD"]
++    extra = (folder / "cfg/extra_cfg.yml").read_text()
++    assert "EnableWeatherFx: true" in extra and "RconPort: 9610" in extra and "EnableAi: false" in extra
++    deadline = time.time() + 5
++    while manager.rain_status["state"] == "pending" and time.time() < deadline:
++        time.sleep(.05)
++    assert manager.rain_status["state"] == "applied"
++    assert captured["server"].commands == ["setrain 0.600 1.000 0.600"]
++
++    result = manager.weather("run", {"rain": .2, "wetness": .4, "water": .1, "transition": 0})
++    assert result["confirmed"] is True and result["source"] == "assettoserver_rcon"
++    assert captured["server"].commands[-1] == "setrain 0.200 0.400 0.100"
++
++    manager.stop("run")
++    captured["server"].close()
++    assert "Original" in (folder / "cfg/server_cfg.ini").read_text()
++    assert (folder / "cfg/extra_cfg.yml").read_text() == "EnableWeatherFx: false\nEnableAi: false\n"
++
++
++def test_rcon_retries_with_comma_decimals_for_polish_locale():
++    server = FakeRconServer("secret", comma_decimals=True)
++    manager = ServerManager("unused")
++    manager._send_rain(Rcon("127.0.0.1", server.port, "secret"), {"rain": .5, "wetness": .5, "water": .1})
++    assert server.commands == ["setrain 0.500 0.500 0.100", "setrain 0,500 0,500 0,100"]
++    server.close()
++
++
++def test_rcon_rejects_wrong_password():
++    server = FakeRconServer("secret")
++    with pytest.raises(sm.RconError, match="hasło"):
++        Rcon("127.0.0.1", server.port, "wrong").command("setrain 0 0 0")
++    server.close()
++
++
++def test_agent_accepts_group_rain_only_from_csp_server(tmp_path, monkeypatch):
++    launcher = Launcher(tmp_path, tmp_path / "docs", tmp_path / "state")
++    (tmp_path / "acs.exe").write_bytes(b"")
++    (tmp_path / "content/weather/3_clear").mkdir(parents=True)
++    monkeypatch.setattr(launcher, "catalog", lambda: {"track:magione:", "car:abarth500"})
++    monkeypatch.setattr("racecoach_agent.launcher.game_running", lambda: False)
++    monkeypatch.setattr("racecoach_agent.launcher.os.name", "nt")
++    group = dict(scenario(.5), mode="multiplayer", connection={"host": "192.168.1.2", "port": 9600, "http_port": 8081})
++    with pytest.raises(RuntimeError, match="AssettoServer"):
++        launcher.prepare(group)
++    group["connection"]["csp_weather"] = True
++    with pytest.raises(RuntimeError, match="Custom Shaders Patch"):
++        launcher.prepare(group)
++    (tmp_path / "extension/config").mkdir(parents=True)
++    (tmp_path / "extension/config/weather_fx.ini").write_text("")
++    assert launcher.prepare(group)["weather_control"] is False
+diff --git a/backend/tests/test_weather_live.py b/backend/tests/test_weather_live.py
+index 1dc800b..55befdd 100644
+--- a/backend/tests/test_weather_live.py
++++ b/backend/tests/test_weather_live.py
+@@ -72,3 +72,80 @@ def test_live_weather_change_waits_for_station_confirmation(logged):
+     response = logged.post(f"/api/runs/{run_id}/weather", json={"rain": 0, "wetness": 0, "water": 0})
+     thread.join()
+     assert response.status_code == 409 and "Gra nie potwierdziła" in response.json()["detail"]
++
++
++class FakeServerManager:
++    """Zastępuje zarządzany serwer: AssettoServer z deszczem CSP albo brak serwera (wyścig wirtualny)."""
++
++    def __init__(self, configured):
++        self.configured = self.live_weather = self.rain_supported = configured
++        self.started, self.changes = [], []
++
++    def start(self, run_id, scenario, participants):
++        self.started.append(scenario)
++        return {"host": "192.168.1.2", "port": 9600, "http_port": 8081, "password": "", "csp_weather": True}
++
++    def weather(self, run_id, payload):
++        self.changes.append(payload)
++        return {"confirmed": True, **payload, "source": "assettoserver_rcon"}
++
++    def stop(self, run_id=None):
++        pass
++
++
++def group(logged, server, race_laps=None):
++    seed(logged.app.state.db)
++    logged.app.state.server_manager = server
++    assert logged.post("/api/tracks", json=TRACK).status_code == 201
++    stations = []
++    for name in ("Stanowisko A", "Stanowisko B"):
++        station = logged.post("/api/stations", json={"name": name}).json()
++        auth = {"Authorization": "Bearer " + station["token"]}
++        heartbeat = {"version": "0.1.0", "game": "idle", "capabilities": ["ac.launch", "weather.csp"],
++                     "catalog": ["track:monza:", "car:ks_mazda_mx5_cup", "weather:3_clear"]}
++        assert logged.post("/api/agent/heartbeat", headers=auth, json=heartbeat).status_code == 200
++        stations.append((station, auth))
++    exercise = logged.post("/api/exercises", json={"title": "Monza w deszczu", "track_id": "monza", "car": "ks_mazda_mx5_cup",
++                                                    "conditions": {"weather": "3_clear", "rain": .6}}).json()["id"]
++    body = {"exercise_id": exercise, "mode": "multiplayer",
++            "participants": [{"trainee_id": t, "station_id": s["id"]} for t, (s, _) in zip(("anna", "piotr"), stations)]}
++    if race_laps:
++        body["race_laps"] = race_laps
++    run = logged.post("/api/runs", json=body)
++    assert run.status_code == 201, run.text
++    run_id = run.json()["id"]
++    for station, auth in stations:
++        command = next(c for c in logged.get("/api/agent/commands", headers=auth).json() if c["kind"] == "prepare_session")
++        logged.post(f"/api/agent/commands/{command['id']}/result", headers=auth, json={"status": "succeeded", "result": {"verified": True}})
++    assert logged.post(f"/api/runs/{run_id}/start").status_code == 200
++    for station, auth in stations:
++        command = next(c for c in logged.get("/api/agent/commands", headers=auth).json() if c["kind"] == "start_session")
++        logged.post(f"/api/agent/commands/{command['id']}/result", headers=auth, json={"status": "succeeded", "result": {
++            "actual": {"track_id": "monza", "layout": "", "car": "ks_mazda_mx5_cup", "simulated": False}}})
++    return run_id, stations
++
++
++def test_group_rain_runs_on_assettoserver_and_changes_live(logged):
++    server = FakeServerManager(configured=True)
++    run_id, _ = group(logged, server)
++    assert server.started[0]["conditions"]["rain"] == .6
++    listed = next(r for r in logged.get("/api/runs").json() if r["id"] == run_id)
++    assert listed["weather_control"] is True and "connection" not in listed["scenario"]
++    response = logged.post(f"/api/runs/{run_id}/weather", json={"rain": .2, "wetness": .3, "water": .1, "transition": 10})
++    assert response.status_code == 200 and response.json()["source"] == "assettoserver_rcon"
++    assert server.changes == [{"rain": .2, "wetness": .3, "water": .1, "transition": 10}]
++
++
++def test_virtual_race_changes_weather_on_every_station(logged):
++    server = FakeServerManager(configured=False)
++    run_id, stations = group(logged, server, race_laps=3)
++    assert server.started == []
++    listed = next(r for r in logged.get("/api/runs").json() if r["id"] == run_id)
++    assert listed["weather_control"] is True
++    db = logged.app.state.db
++    threads = [answer_weather(db, s["id"], "succeeded", {"confirmed": True, "rain": .3, "source": "csp_controller"}) for s, _ in stations]
++    response = logged.post(f"/api/runs/{run_id}/weather", json={"rain": .3, "wetness": .4, "water": .1})
++    for thread in threads:
++        thread.join()
++    assert response.status_code == 200, response.text
++    assert len(response.json()["stations"]) == 2
+diff --git a/docs/windows-station.md b/docs/windows-station.md
+index 4ac0687..51a33e3 100644
+--- a/docs/windows-station.md
++++ b/docs/windows-station.md
+@@ -117,6 +117,37 @@ ponownym użyciem instalacji. Klienci nadal potwierdzają rzeczywiście załadow
+ Sesja grupowa jest wspólnym treningiem Practice. Formalne wyścigi, kwalifikacje, kontrola
+ Steam GUID i import oficjalnych wyników serwera są kolejnym rozszerzeniem.
+ 
++### Deszcz w sesji grupowej: AssettoServer
++
++`acServer.exe` od Kunos nie obsługuje deszczu, więc centrala odmawia z nim scenariusza deszczowego.
++Deszcz na wspólnym serwerze działa z [AssettoServer](https://assettoserver.org) (serwer zgodny z AC,
++z pogodą CSP WeatherFX). Centrala rozpoznaje go po nazwie pliku `AssettoServer.exe`
++(albo `RACECOACH_SERVER_KIND=assettoserver`).
++
++1. Pobierz `assetto-server-win-x64.zip` z wydań AssettoServer na GitHubie i rozpakuj do osobnego
++   folderu, np. `C:\RaceCoachServer`.
++2. Przygotuj `cfg\server_cfg.ini` i folder `content` z autami i torami ćwiczeń: w Content Managerze
++   Serwer → preset → **Pack** (Windows, bez „Include executable”), rozpakuj paczkę do tego samego folderu.
++   Uruchom raz `AssettoServer.exe`, żeby utworzył `cfg\extra_cfg.yml`, i zamknij go.
++3. Uruchom centralę z tym folderem — `START-RaceCoach.bat -Lan -AcServer "C:\RaceCoachServer"` (zapamiętywane)
++   albo ręcznie przez zmienne `RACECOACH_SERVER_*` jak wyżej, z `RACECOACH_SERVER_EXECUTABLE=...\AssettoServer.exe`.
++4. Zapora na komputerze centrali: TCP+UDP `RACECOACH_SERVER_PORT` (9600) i TCP `HTTP_PORT` (8081).
++5. Na każdym stanowisku: CSP z włączonym WeatherFX (deszcz online wymaga wersji CSP z RainFX).
++
++Na czas sesji centrala:
++
++- zapisuje w `server_cfg.ini` typ pogody WeatherFX (`GRAPHICS=3_clear_type=7`, typ z intensywności deszczu)
++  i losowe `ADMIN_PASSWORD` tej sesji;
++- w `extra_cfg.yml` włącza `EnableWeatherFx: true` i `RconPort` (domyślnie `9610`, zmienna
++  `RACECOACH_SERVER_RCON_PORT`; port jest używany tylko lokalnie i nie wymaga reguły w zaporze);
++- po starcie serwera ustawia przez RCON dokładny deszcz, mokrość i wodę (`setrain`), tak samo jak
++  w treningu indywidualnym: tor jest mokry od startu;
++- **Stanowiska → Zmień warunki** wysyła `setrain` do serwera; przejście jest rozkładane na kroki co 1 s.
++  Dalej mokrość i kałuże zmieniają się według modelu AssettoServer (tor schnie lub nasiąka).
++
++Wszystkie trzy pliki konfiguracji są przywracane po zakończeniu sesji. Agent w sesji grupowej nie
++instaluje własnego kontrolera pogody — warunki przychodzą z serwera, a potwierdzenie ma status `server_csp`.
++
+ ## Pogoda i CSP
+ 
+ Podstawowy adapter obsługuje lokalne pakiety pogody oraz godziny dzienne 08:00–18:00.
+@@ -124,8 +155,9 @@ Sprawdza obecność pakietu w `content/weather`. Ustawia zerowy wiatr i wyłącz
+ przyczepności w generowanej konfiguracji. Nie gwarantuje przejęcia kontroli nad zewnętrznym
+ kontrolerem Pure/Sol/CSP; aktualne warunki mają status `configuration_only`.
+ 
+-Rzeczywisty deszcz i zmiana warunków podczas jazdy wymagają osobno wdrożonego mostu do
+-wybranej wersji kontrolera/serwera. RaceCoach ma klienta tego kontraktu:
++Deszcz w treningu indywidualnym i w wyścigu wirtualnym obsługuje kontroler `racecoach` instalowany
++przez agenta. W sesji grupowej na wspólnym serwerze — AssettoServer (sekcja wyżej). Dla innych
++serwerów zostaje osobno wdrożony most do wybranej wersji kontrolera/serwera. RaceCoach ma klienta tego kontraktu:
+ 
+ - środowisko centrali: `RACECOACH_WEATHER_BRIDGE`, `RACECOACH_WEATHER_TOKEN`;
+ - żądanie: `POST <bridge>/weather`, nagłówek `Authorization: Bearer ...`;
+diff --git a/scripts/local-start.ps1 b/scripts/local-start.ps1
+index c9e6c02..8f48c0a 100644
+--- a/scripts/local-start.ps1
++++ b/scripts/local-start.ps1
+@@ -13,6 +13,9 @@
+   .\scripts\local-start.ps1 -GameDir "D:\SteamLibrary\steamapps\common\assettocorsa"
+ .EXAMPLE
+   .\scripts\local-start.ps1 -Kiosk -NoOverlayWindow
++.EXAMPLE
++  .\scripts\local-start.ps1 -Lan -AcServer "C:\RaceCoachServer"
++  Sesje grupowe na wspólnym serwerze. Z AssettoServer.exe w tym folderze także deszcz CSP.
+ .EXAMPLE
+   .\scripts\local-start.ps1 -Hardware openffboard -DDControl "C:\sim_soft\wheel-control" -MaxStrength 25
+ #>
+@@ -30,7 +33,10 @@ param(
+     [switch]$Rebuild,
+     [switch]$NewStation,
+     [switch]$NoOverlayWindow,
+-    [switch]$Kiosk
++    [switch]$Kiosk,
++    [string]$AcServer = "",
++    [string]$AcServerHost = "",
++    [switch]$NoAcServer
+ )
+ . (Join-Path $PSScriptRoot "local-common.ps1")
+ $Host.UI.RawUI.WindowTitle = "RaceCoach - uruchamianie"
+@@ -82,12 +88,42 @@ if (-not $NoAgent) {
+     if (Get-Process acs -ErrorAction SilentlyContinue) { Write-Warn "Assetto Corsa jest włączone - zamknij grę; sesję uruchamia agent." }
+ }
+ 
++# ---------- serwer AC sesji grupowych ----------
++if ($NoAcServer) { Set-ConfigValue $config "acServer" ""; Save-LocalConfig $config }
++if (-not $AcServer -and -not $NoAcServer -and $config.PSObject.Properties["acServer"]) { $AcServer = $config.acServer }
++if ($AcServer) {
++    Write-Step "Serwer AC do sesji grupowych"
++    $AcServer = (Resolve-Path -LiteralPath $AcServer -ErrorAction SilentlyContinue).Path
++    if (-not $AcServer) { Stop-WithError "Nie ma folderu serwera podanego w -AcServer." }
++    $exe = @("AssettoServer.exe", "acServer.exe") | ForEach-Object { Join-Path $AcServer $_ } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
++    if (-not $exe) { Stop-WithError "W $AcServer nie ma AssettoServer.exe ani acServer.exe." }
++    if (-not (Test-Path -LiteralPath (Join-Path $AcServer "cfg\server_cfg.ini"))) { Stop-WithError "W $AcServer brakuje cfg\server_cfg.ini." }
++    if (-not $AcServerHost -and $config.PSObject.Properties["acServerHost"]) { $AcServerHost = $config.acServerHost }
++    if (-not $AcServerHost) {
++        $lan = Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq "Up" } | Select-Object -First 1
++        if ($lan) { $AcServerHost = @($lan.IPv4Address)[0].IPAddress }
++        if (-not $AcServerHost) { Stop-WithError "Nie wykryto adresu IP w sieci lokalnej - podaj go: -AcServerHost 192.168.x.x" }
++    }
++    $env:RACECOACH_SERVER_DIR = $AcServer
++    $env:RACECOACH_SERVER_EXECUTABLE = $exe
++    $env:RACECOACH_SERVER_HOST = $AcServerHost
++    if (-not $env:RACECOACH_SERVER_PORT) { $env:RACECOACH_SERVER_PORT = "9600" }
++    Set-ConfigValue $config "acServer" $AcServer
++    Set-ConfigValue $config "acServerHost" $AcServerHost
++    Save-LocalConfig $config
++    if ((Split-Path $exe -Leaf) -ieq "AssettoServer.exe") { Write-Ok "AssettoServer: $exe (deszcz CSP w sesjach grupowych)" }
++    else { Write-Ok "acServer Kunos: $exe (sesje grupowe tylko na sucho; deszcz wymaga AssettoServer)" }
++    Write-Ok "Adres dla stanowisk: ${AcServerHost}:$($env:RACECOACH_SERVER_PORT)"
++    if (-not $Lan) { Write-Warn "Bez -Lan inne komputery nie połączą się z centralą." }
++}
++
+ # ---------- centrala ----------
+ Write-Step "Centrala (panel instruktora)"
+ if (Test-Server $baseUrl) {
+     $meta = Invoke-RestMethod "$baseUrl/api/meta"
+     if ($meta.demo) { Stop-WithError "Na porcie $Port działa tryb DEMO. Zamknij okno demo albo użyj innego portu (-Port 8002)." }
+     Write-Ok "Centrala już działa - używam jej."
++    if ($AcServer) { Write-Warn "Ustawienia serwera AC zadziałają dopiero po ponownym uruchomieniu centrali (Ctrl+C w oknie CENTRALA)." }
+ } else {
+     $command = @"
+ `$Host.UI.RawUI.WindowTitle = 'RaceCoach - CENTRALA  (Ctrl+C zatrzymuje)'
+-- 
+2.43.0
+

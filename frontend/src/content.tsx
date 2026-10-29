@@ -1,8 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { api, post } from "./api";
-import type { Data } from "./types";
+import type { Data, Exercise } from "./types";
 
 export type ContentCar = {
   id: string;
@@ -204,6 +204,24 @@ export function SearchSelect({
   );
 }
 
+/** Dane scenariusza z formularza (tworzenie, edycja, szybki przejazd). */
+export type ScenarioBody = {
+  title: string;
+  track_id: string;
+  car: string;
+  mode: string;
+  duration: number;
+  hardware_profile: { degrees: number; strength: number } | null;
+  conditions: {
+    weather: string;
+    air_temp: number;
+    road_temp: number;
+    grip: number;
+    rain: number;
+    time: string;
+  };
+};
+
 export function useContent(enabled = true) {
   const [content, setContent] = useState<Content | null>(null);
   const [error, setError] = useState("");
@@ -238,34 +256,59 @@ function trackDetail(t: ContentTrack) {
     .join(" · ");
 }
 
-/** Kreator scenariusza: auto, tor z wariantem i pogoda wybierane z gry stanowisk. */
+/** Kreator scenariusza: auto, tor z wariantem i pogoda wybierane z gry stanowisk.
+ *
+ * `initial` - edycja istniejącego scenariusza; `quick` - szybki przejazd (bez nazwy, trybu i profilu DD,
+ * a `extra` dokłada uczestników sesji).
+ */
 export function ExerciseForm({
   data,
   onSubmit,
   onClose,
+  initial,
+  quick = false,
+  extra,
+  submitLabel,
+  note,
 }: {
   data: Data;
-  onSubmit: (body: unknown) => Promise<unknown>;
+  onSubmit: (body: ScenarioBody) => Promise<unknown>;
   onClose: () => void;
+  initial?: Exercise;
+  quick?: boolean;
+  extra?: ReactNode;
+  submitLabel?: string;
+  note?: ReactNode;
 }) {
   const { content, error: loadError } = useContent();
   const [v, setV] = useState({
-    title: "",
-    car: "",
-    track: "",
-    weather: "3_clear",
-    time: "13:00",
-    duration: "15",
-    air_temp: "22",
-    road_temp: "29",
-    grip: "100",
-    rain: "0",
-    mode: "either",
-    profile: "off",
-    degrees: "900",
-    strength: "15",
+    title: initial?.title ?? "",
+    car: initial?.car ?? "",
+    track: initial ? `track:${initial.track_id}` : "",
+    weather: initial?.conditions.weather ?? "3_clear",
+    time: initial?.conditions.time ?? "13:00",
+    duration: String(initial?.duration ?? (quick ? 20 : 15)),
+    air_temp: String(initial?.conditions.air_temp ?? 22),
+    road_temp: String(initial?.conditions.road_temp ?? 29),
+    grip: String(Math.round((initial?.conditions.grip ?? 1) * 100)),
+    rain: String(Math.round((initial?.conditions.rain ?? 0) * 100)),
+    mode: initial?.mode ?? "either",
+    profile: initial?.hardware_profile ? "on" : "off",
+    degrees: String(initial?.hardware_profile?.degrees ?? 900),
+    strength: String(initial?.hardware_profile?.strength ?? 15),
   });
-  const [titleTouched, setTitleTouched] = useState(false),
+  // Przy edycji tor jest znany po identyfikatorze; po wczytaniu katalogu gry wybieramy jego wpis z listy.
+  useEffect(() => {
+    if (!initial || !content) return;
+    const game = content.tracks.find((t) => t.track_id === initial.track_id);
+    if (game)
+      setV((old) =>
+        old.track === `track:${initial.track_id}`
+          ? { ...old, track: `game:${game.id}|${game.layout}` }
+          : old,
+      );
+  }, [content, initial]);
+  const [titleTouched, setTitleTouched] = useState(!!initial),
     [busy, setBusy] = useState(""),
     [error, setError] = useState("");
   const set = (key: keyof typeof v, value: string) =>
@@ -316,7 +359,8 @@ export function ExerciseForm({
     setError("");
     if (!v.track) return setError("Wybierz tor.");
     if (!v.car) return setError("Wybierz samochód.");
-    if (title.trim().length < 2) return setError("Podaj nazwę scenariusza.");
+    if (!quick && title.trim().length < 2)
+      return setError("Podaj nazwę scenariusza.");
     try {
       let trackId = "";
       if (v.track.startsWith("track:")) trackId = v.track.slice(6);
@@ -336,7 +380,7 @@ export function ExerciseForm({
           ).id;
         }
       }
-      setBusy("Zapisywanie…");
+      setBusy(quick ? "Zlecanie przygotowania…" : "Zapisywanie…");
       await onSubmit({
         title: title.trim(),
         track_id: trackId,
@@ -399,6 +443,7 @@ export function ExerciseForm({
       />
       {fromGame ? (
         <SearchSelect
+          key="car"
           label="Samochód"
           value={v.car}
           options={carOptions(cars)}
@@ -415,20 +460,22 @@ export function ExerciseForm({
           />
         </label>
       )}
-      <label>
-        Nazwa scenariusza
-        <input
-          required
-          minLength={2}
-          maxLength={150}
-          value={title}
-          placeholder="Uzupełni się po wyborze toru i auta"
-          onChange={(e) => {
-            setTitleTouched(true);
-            set("title", e.target.value);
-          }}
-        />
-      </label>
+      {!quick && (
+        <label>
+          Nazwa scenariusza
+          <input
+            required
+            minLength={2}
+            maxLength={150}
+            value={title}
+            placeholder="Uzupełni się po wyborze toru i auta"
+            onChange={(e) => {
+              setTitleTouched(true);
+              set("title", e.target.value);
+            }}
+          />
+        </label>
+      )}
       <div className="form-grid">
         <SearchSelect
           label="Niebo (pakiet pogody z gry)"
@@ -442,35 +489,44 @@ export function ExerciseForm({
         {num("air_temp", "Temperatura powietrza (°C)", -10, 50)}
         {num("road_temp", "Temperatura toru (°C)", -10, 80)}
         {num("grip", "Przyczepność (%)", 50, 100)}
-        <label>
-          Tryb
-          <select value={v.mode} onChange={(e) => set("mode", e.target.value)}>
-            <option value="either">Indywidualny i grupowy</option>
-            <option value="individual">Indywidualny</option>
-            <option value="multiplayer">Grupowy</option>
-          </select>
-        </label>
+        {!quick && (
+          <label>
+            Tryb
+            <select
+              value={v.mode}
+              onChange={(e) => set("mode", e.target.value)}
+            >
+              <option value="either">Indywidualny i grupowy</option>
+              <option value="individual">Indywidualny</option>
+              <option value="multiplayer">Grupowy</option>
+            </select>
+          </label>
+        )}
       </div>
       <p className="muted">
         Deszcz na starcie i zmiany pogody podczas jazdy wymagają na stanowisku
         Custom Shaders Patch z WeatherFX. Godzina 08:00–18:00.
       </p>
-      <label>
-        Profil bazy wymagany w ćwiczeniu
-        <select
-          value={v.profile}
-          onChange={(e) => set("profile", e.target.value)}
-        >
-          <option value="off">Zachowaj bieżący profil stanowiska</option>
-          <option value="on">Zastosuj i potwierdź wskazany profil</option>
-        </select>
-      </label>
-      {v.profile === "on" && (
+      {!quick && (
+        <label>
+          Profil bazy wymagany w ćwiczeniu
+          <select
+            value={v.profile}
+            onChange={(e) => set("profile", e.target.value)}
+          >
+            <option value="off">Zachowaj bieżący profil stanowiska</option>
+            <option value="on">Zastosuj i potwierdź wskazany profil</option>
+          </select>
+        </label>
+      )}
+      {!quick && v.profile === "on" && (
         <div className="form-grid">
           {num("degrees", "Zakres obrotu (°)", 180, 1440)}
           {num("strength", "Siła (%)", 0, 100)}
         </div>
       )}
+      {note}
+      {extra}
       {error && (
         <div className="notice error" role="alert">
           {error}
@@ -481,7 +537,7 @@ export function ExerciseForm({
           Anuluj
         </button>
         <button className="button" disabled={!!busy}>
-          {busy || "Zapisz scenariusz"}
+          {busy || submitLabel || "Zapisz scenariusz"}
           <Check size={15} />
         </button>
       </div>

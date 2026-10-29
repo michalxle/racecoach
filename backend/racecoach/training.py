@@ -10,7 +10,7 @@ from fastapi import Depends, HTTPException, Query
 from .app import instructor, require_row, station, user
 from .db import dump, uid
 from .models import (AttemptFinish, AttemptReview, ExerciseCreate, ExerciseReference, HardwareProfile,
-                     RunCreate, TelemetryBatch, TrackCreate, WeatherChange)
+                     QuickRunCreate, RunCreate, TelemetryBatch, TrackCreate, WeatherChange)
 from .telemetry import analyze, load_samples, select_lap, split_laps, store_chunk
 
 
@@ -80,8 +80,10 @@ def register_training_routes(app, db):
 
     @app.get("/api/exercises")
     def exercises(actor=Depends(user)):
-        rows = db.all("SELECT e.*,t.name AS track_name,t.layout FROM exercises e JOIN tracks t ON t.id=e.track_id ORDER BY e.title")
+        rows = db.all("SELECT e.*,t.name AS track_name,t.layout FROM exercises e JOIN tracks t ON t.id=e.track_id WHERE e.kind='scenario' ORDER BY e.title")
         for row in rows:
+            row["archived"] = bool(row["archived"])
+            row["runs"] = db.one("SELECT COUNT(*) AS n FROM runs WHERE exercise_id=?", (row["id"],))["n"]
             row["conditions"] = json.loads(row["conditions"])
             row["hardware_profile"] = json.loads(row["hardware_profile"]) if row["hardware_profile"] else None
             row["reference"] = db.one("SELECT attempt_id,lap FROM exercise_references WHERE exercise_id=?", (row["id"],))
@@ -95,6 +97,69 @@ def register_training_routes(app, db):
             c.execute("INSERT INTO exercises(id,title,track_id,car,conditions,duration,mode,revision,hardware_profile) VALUES (?,?,?,?,?,?,?,?,?)", (row_id, body.title, body.track_id, body.car, dump(body.conditions.model_dump()), body.duration, body.mode, 1, dump(body.hardware_profile.model_dump()) if body.hardware_profile else None))
             db.audit(actor["id"], "exercise.create", row_id, body.model_dump(), c)
         return {"id": row_id}
+
+    def exercise_values(body):
+        return (body.title, body.track_id, body.car, dump(body.conditions.model_dump()), body.duration, body.mode,
+                dump(body.hardware_profile.model_dump()) if body.hardware_profile else None)
+
+    @app.put("/api/exercises/{exercise_id}")
+    def edit_exercise(exercise_id: str, body: ExerciseCreate, actor=Depends(instructor)):
+        """Edycja scenariusza. Bez przejazdów - zmiana w miejscu. Z przejazdami - nowa rewizja.
+
+        Przejazdy zapisują kopię scenariusza, ale rekordy osobiste i wzorzec liczą się per ćwiczenie,
+        więc zmiana toru, auta lub warunków po pierwszym przejeździe tworzy nową rewizję (nowy identyfikator),
+        stara trafia do archiwum, a otwarte pozycje planów przechodzą na nową wersję.
+        """
+        old = require_row(db, "exercises", exercise_id)
+        if old["kind"] != "scenario":
+            raise HTTPException(404, "Nie znaleziono scenariusza")
+        require_row(db, "tracks", body.track_id)
+        values = exercise_values(body)
+        used = db.one("SELECT id FROM runs WHERE exercise_id=? LIMIT 1", (exercise_id,))
+        only_title = (old["track_id"], old["car"], old["conditions"], old["duration"], old["mode"], old["hardware_profile"]) == values[1:]
+        with db.transaction() as c:
+            if not used or only_title:
+                c.execute("UPDATE exercises SET title=?,track_id=?,car=?,conditions=?,duration=?,mode=?,hardware_profile=?,"
+                          "revision=revision+? WHERE id=?", (*values, 0 if only_title else 1, exercise_id))
+                if not only_title:
+                    c.execute("DELETE FROM exercise_references WHERE exercise_id=?", (exercise_id,))
+                db.audit(actor["id"], "exercise.update", exercise_id, body.model_dump(), c)
+                return {"id": exercise_id, "new_revision": False}
+            row_id = uid()
+            c.execute("INSERT INTO exercises(id,title,track_id,car,conditions,duration,mode,revision,hardware_profile) VALUES (?,?,?,?,?,?,?,?,?)",
+                      (row_id, *values[:6], old["revision"] + 1, values[6]))
+            c.execute("UPDATE exercises SET archived=1 WHERE id=?", (exercise_id,))
+            c.execute("UPDATE plan_items SET exercise_id=?,revision=revision+1 WHERE exercise_id=? AND status NOT IN ('passed','skipped')",
+                      (row_id, exercise_id))
+            db.audit(actor["id"], "exercise.revision", row_id, {"previous": exercise_id, **body.model_dump()}, c)
+        return {"id": row_id, "new_revision": True}
+
+    @app.delete("/api/exercises/{exercise_id}")
+    def delete_exercise(exercise_id: str, actor=Depends(instructor)):
+        """Usuwa scenariusz bez historii; scenariusz z przejazdami lub w planach trafia do archiwum."""
+        row = require_row(db, "exercises", exercise_id)
+        if row["kind"] != "scenario":
+            raise HTTPException(404, "Nie znaleziono scenariusza")
+        with db.transaction() as c:
+            if c.execute("SELECT id FROM runs WHERE exercise_id=? AND status NOT IN ('completed','interrupted') LIMIT 1", (exercise_id,)).fetchone():
+                raise HTTPException(409, "Scenariusz jest używany w trwającej sesji")
+            history = c.execute("SELECT id FROM runs WHERE exercise_id=? LIMIT 1", (exercise_id,)).fetchone() or \
+                c.execute("SELECT id FROM plan_items WHERE exercise_id=? LIMIT 1", (exercise_id,)).fetchone()
+            if history:
+                c.execute("UPDATE exercises SET archived=1 WHERE id=?", (exercise_id,))
+            else:
+                c.execute("DELETE FROM exercise_references WHERE exercise_id=?", (exercise_id,))
+                c.execute("DELETE FROM exercises WHERE id=?", (exercise_id,))
+            db.audit(actor["id"], "exercise.archive" if history else "exercise.delete", exercise_id, conn=c)
+        return {"ok": True, "archived": bool(history)}
+
+    @app.post("/api/exercises/{exercise_id}/restore")
+    def restore_exercise(exercise_id: str, actor=Depends(instructor)):
+        require_row(db, "exercises", exercise_id)
+        with db.transaction() as c:
+            c.execute("UPDATE exercises SET archived=0,kind='scenario' WHERE id=?", (exercise_id,))
+            db.audit(actor["id"], "exercise.restore", exercise_id, conn=c)
+        return {"ok": True}
 
     @app.post("/api/exercises/{exercise_id}/reference")
     def set_reference(exercise_id: str, body: ExerciseReference, actor=Depends(instructor)):
@@ -127,6 +192,29 @@ def register_training_routes(app, db):
     @app.post("/api/runs", status_code=201)
     def create_run(body: RunCreate, actor=Depends(instructor)):
         exercise = require_row(db, "exercises", body.exercise_id)
+        if exercise["archived"]:
+            raise HTTPException(409, "Scenariusz jest w archiwum; przywróć go albo wybierz aktualną wersję")
+        return prepare_run(body, exercise, actor)
+
+    @app.post("/api/runs/quick", status_code=201)
+    def quick_run(body: QuickRunCreate, actor=Depends(instructor)):
+        """Szybki przejazd bez scenariusza: ukryte ćwiczenie typu 'quick' przechowuje tor, auto i warunki."""
+        track = require_row(db, "tracks", body.track_id)
+        exercise_id = uid()
+        title = (body.title or "").strip() or f"Szybki przejazd · {track['name']} · {body.car}"
+        with db.transaction() as c:
+            c.execute("INSERT INTO exercises(id,title,track_id,car,conditions,duration,mode,revision,hardware_profile,kind) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      (exercise_id, title[:150], body.track_id, body.car, dump(body.conditions.model_dump()), body.duration, "either", 1, None, "quick"))
+        try:
+            options = RunCreate(exercise_id=exercise_id, **body.model_dump(include=set(RunCreate.model_fields) - {"exercise_id"}))
+            return prepare_run(options, require_row(db, "exercises", exercise_id), actor)
+        except Exception:
+            with db.transaction() as c:
+                if not c.execute("SELECT id FROM runs WHERE exercise_id=?", (exercise_id,)).fetchone():
+                    c.execute("DELETE FROM exercises WHERE id=?", (exercise_id,))
+            raise
+
+    def prepare_run(body, exercise, actor):
         track = decode_track(require_row(db, "tracks", exercise["track_id"]))
         if exercise["mode"] not in (body.mode, "either"):
             raise HTTPException(422, "Ćwiczenie nie obsługuje tego trybu")
@@ -134,7 +222,8 @@ def register_training_routes(app, db):
                     "track_id": track["game_id"], "layout": track["layout"], "track": track, "car": exercise["car"],
                     "conditions": json.loads(exercise["conditions"]), "duration": exercise["duration"], "mode": body.mode,
                     "hardware_profile": json.loads(exercise["hardware_profile"]) if exercise["hardware_profile"] else None,
-                    "race_laps": body.race_laps}
+                    "race_laps": body.race_laps, "collisions": body.collisions, "show_rivals": body.show_rivals,
+                    "quick": exercise["kind"] == "quick"}
         sources = []
         for p in body.participants:
             source = require_row(db, "stations", p.station_id)

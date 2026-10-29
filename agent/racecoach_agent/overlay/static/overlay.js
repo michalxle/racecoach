@@ -378,9 +378,37 @@ function drawGameMap() {
       drawCornerBadge(x, y, c.n);
     }
   }
+  drawRivals(px, pz, ini, rot, k, ox, oy, W, H);
   drawCar(ox, oy);
   ctx.restore();
   return true;
+}
+// Pozostali uczestnicy sesji grupowej (pozycje z centrali, ok. 1 raz/s).
+function drawRivals(px, pz, ini, rot, k, ox, oy, W, H) {
+  const rivals = (st && st.rivals) || [];
+  if (!rivals.length) return;
+  const sf = ini.SCALE_FACTOR || 1;
+  const c0 = Math.cos(rot), s0 = Math.sin(rot);
+  ctx.font = 'bold 10px Segoe UI, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  for (const r of rivals) {
+    if (r.x == null || r.z == null) continue;
+    const mx = (r.x + ini.X_OFFSET) / sf - px, mz = (r.z + ini.Z_OFFSET) / sf - pz;
+    let x = ox + (mx * c0 - mz * s0) * k, y = oy + (mx * s0 + mz * c0) * k;
+    // Kierowca poza kadrem: kropka przy krawędzi minimapy w jego kierunku.
+    x = Math.min(W - 7, Math.max(7, x));
+    y = Math.min(H - 7, Math.max(7, y));
+    ctx.fillStyle = '#5aa9ff';
+    ctx.strokeStyle = '#04121f';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    const label = String(r.name || '').split(' ')[0].slice(0, 10);
+    if (label) {
+      ctx.fillStyle = '#e8f2ff';
+      ctx.fillText(label, x, y - 8);
+    }
+  }
 }
 function drawCornerBadge(x, y, num) {
   ctx.fillStyle = '#e77942';

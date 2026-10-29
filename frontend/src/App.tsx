@@ -53,12 +53,14 @@ import type {
   User,
 } from "./types";
 import {
+  carColors,
   DeltaValue,
   Meter,
   nearest,
   TelemetryChart,
   TrackMap,
 } from "./visuals";
+import type { MapCar } from "./visuals";
 
 type Page =
   | "overview"
@@ -77,6 +79,7 @@ type Modal = {
     | "item"
     | "exercise"
     | "run"
+    | "quick"
     | "profile"
     | "pair"
     | "import"
@@ -325,14 +328,31 @@ export default function App() {
       weather: `/runs/${id}/weather`,
       message: `/stations/${id}/message`,
     };
-    result = await post(endpoints[kind], body);
+    if (kind === "exercise" && id) {
+      const edited = await api<{ new_revision: boolean }>(`/exercises/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+      await refresh();
+      setModal(null);
+      setToast({
+        text: edited.new_revision
+          ? "Zapisano nową rewizję. Poprzednia wersja (z historią przejazdów) jest w archiwum, a otwarte pozycje planów przeszły na nową."
+          : "Scenariusz zaktualizowany.",
+      });
+      return;
+    }
+    result = await post(
+      kind === "quick" ? "/runs/quick" : endpoints[kind],
+      body,
+    );
     if (kind === "pair") setSecret(result as { name: string; token: string });
-    if (kind === "run") setPage("stations");
+    if (kind === "run" || kind === "quick") setPage("stations");
     await refresh();
     setModal(null);
     setToast({
       text:
-        kind === "run"
+        kind === "run" || kind === "quick"
           ? "Przygotowanie zlecone. Poczekaj na gotowość stanowisk, a następnie wybierz Start."
           : kind === "profile"
             ? "Profil wysłany. Wynik odczytu zwrotnego zobaczysz w dzienniku."
@@ -509,7 +529,14 @@ export default function App() {
             />
           )}
           {page === "exercises" && privileged && (
-            <Exercises data={data} onModal={setModal} />
+            <Exercises
+              data={data}
+              onModal={setModal}
+              action={action}
+              pending={pending}
+              refresh={refresh}
+              notify={(text, error) => setToast({ text, error })}
+            />
           )}
           {page === "attempts" && (
             <Attempts
@@ -987,6 +1014,10 @@ function Stations({
           <Plus size={16} />
           Zarejestruj agenta
         </Button>
+        <Button secondary onClick={() => onModal({ kind: "quick" })}>
+          <Gauge size={16} />
+          Szybki przejazd
+        </Button>
         <Button onClick={() => onModal({ kind: "run" })}>
           <Play size={16} />
           Przygotuj sesję
@@ -1001,83 +1032,89 @@ function Stations({
             </span>
           </div>
           {activeRuns.map((r) => (
-            <div key={r.id} className="run-row">
-              <div className="run-icon">
-                <Flag size={20} />
-              </div>
-              <div className="run-description">
-                <strong>{r.title}</strong>
-                <span>
-                  {modeName(r.mode)} ·{" "}
-                  {r.participants.map((p) => p.trainee_name).join(", ")}
-                </span>
-                <div className="run-members">
-                  {r.participants.map((p) => (
-                    <span key={p.id}>
-                      {p.station_name}: {statusNames[p.status] || p.status}
-                    </span>
-                  ))}
+            <div key={r.id}>
+              <div className="run-row">
+                <div className="run-icon">
+                  <Flag size={20} />
                 </div>
-              </div>
-              <Badge status={r.status} />
-              {r.classification && r.classification.length > 0 && (
-                <div className="run-classification">
-                  <span className="eyebrow">
-                    Wyścig · {r.scenario.race_laps} okr.
+                <div className="run-description">
+                  <strong>{r.title}</strong>
+                  <span>
+                    {modeName(r.mode)} ·{" "}
+                    {r.participants.map((p) => p.trainee_name).join(", ")}
                   </span>
-                  <Classification rows={r.classification} />
+                  <div className="run-members">
+                    {r.participants.map((p) => (
+                      <span key={p.id}>
+                        {p.station_name}: {statusNames[p.status] || p.status}
+                      </span>
+                    ))}
+                  </div>
+                  <RunTags run={r} />
                 </div>
-              )}
-              <div className="row-actions">
-                {r.status === "ready" && (
+                <Badge status={r.status} />
+                {r.classification && r.classification.length > 0 && (
+                  <div className="run-classification">
+                    <span className="eyebrow">
+                      Wyścig · {r.scenario.race_laps} okr.
+                    </span>
+                    <Classification rows={r.classification} />
+                  </div>
+                )}
+                <div className="row-actions">
+                  {r.status === "ready" && (
+                    <button
+                      className="button small"
+                      disabled={pending}
+                      onClick={() =>
+                        action(
+                          `/runs/${r.id}/start`,
+                          {},
+                          "Start zlecony. Oczekiwanie na potwierdzenie gry.",
+                        )
+                      }
+                    >
+                      <Play size={14} />
+                      Start
+                    </button>
+                  )}
                   <button
-                    className="button small"
-                    disabled={pending}
+                    className="button secondary small"
+                    disabled={pending || r.status === "stopping"}
                     onClick={() =>
                       action(
-                        `/runs/${r.id}/start`,
+                        `/runs/${r.id}/stop`,
                         {},
-                        "Start zlecony. Oczekiwanie na potwierdzenie gry.",
+                        "Zatrzymanie zlecone do stanowisk.",
                       )
                     }
                   >
-                    <Play size={14} />
-                    Start
+                    <Square size={13} />
+                    Zakończ
                   </button>
-                )}
-                <button
-                  className="button secondary small"
-                  disabled={pending || r.status === "stopping"}
-                  onClick={() =>
-                    action(
-                      `/runs/${r.id}/stop`,
-                      {},
-                      "Zatrzymanie zlecone do stanowisk.",
-                    )
-                  }
-                >
-                  <Square size={13} />
-                  Zakończ
-                </button>
-                {r.status === "running" && (
-                  <button
-                    className="button secondary small"
-                    onClick={() => onModal({ kind: "weather", id: r.id })}
-                    disabled={
-                      pending || !(r.weather_control ?? weatherAvailable)
-                    }
-                    title={
-                      (r.weather_control ?? weatherAvailable)
-                        ? undefined
-                        : r.mode === "individual"
-                          ? "Stanowisko nie zgłasza Custom Shaders Patch z WeatherFX; zmiana pogody podczas jazdy jest niedostępna."
-                          : "Sesja grupowa wymaga mostu pogodowego serwera (RACECOACH_WEATHER_BRIDGE)."
-                    }
-                  >
-                    Zmień warunki
-                  </button>
-                )}
+                  {r.status === "running" && (
+                    <button
+                      className="button secondary small"
+                      onClick={() => onModal({ kind: "weather", id: r.id })}
+                      disabled={
+                        pending || !(r.weather_control ?? weatherAvailable)
+                      }
+                      title={
+                        (r.weather_control ?? weatherAvailable)
+                          ? undefined
+                          : r.mode === "individual"
+                            ? "Stanowisko nie zgłasza Custom Shaders Patch z WeatherFX; zmiana pogody podczas jazdy jest niedostępna."
+                            : "Sesja grupowa wymaga mostu pogodowego serwera (RACECOACH_WEATHER_BRIDGE)."
+                      }
+                    >
+                      Zmień warunki
+                    </button>
+                  )}
+                </div>
               </div>
+              {["starting", "running"].includes(r.status) && (
+                <LiveRunMap run={r} stations={data.stations} />
+              )}
             </div>
           ))}
         </section>
@@ -1242,6 +1279,69 @@ function Stations({
         </section>
       )}
     </>
+  );
+}
+
+/** Cechy sesji widoczne przy aktywnej sesji: tryb grupy, kolizje, szybki przejazd. */
+function RunTags({ run }: { run: Run }) {
+  const s = run.scenario;
+  const tags = [
+    s.quick ? "Szybki przejazd" : "",
+    s.virtual_race ? "Wyścig wirtualny" : "",
+    run.mode === "multiplayer" && !s.virtual_race
+      ? s.collisions === false
+        ? "Bez kolizji"
+        : "Kolizje włączone"
+      : "",
+    run.mode === "multiplayer" && s.show_rivals === false
+      ? "Rywale ukryci na minimapie"
+      : "",
+    s.conditions?.rain ? `Deszcz ${Math.round(s.conditions.rain * 100)}%` : "",
+  ].filter(Boolean);
+  if (!tags.length) return null;
+  return (
+    <div className="run-tags">
+      {tags.map((t) => (
+        <span key={t}>{t}</span>
+      ))}
+    </div>
+  );
+}
+
+/** Mapa toru z pozycjami wszystkich kierowców sesji (telemetria stanowisk, ok. 1 raz/s). */
+function LiveRunMap({ run, stations }: { run: Run; stations: Station[] }) {
+  const track = run.scenario.track;
+  if (!track?.geometry?.length) return null;
+  const cars: MapCar[] = run.participants.flatMap((p, i) => {
+    const station = stations.find((s) => s.id === p.station_id);
+    const t =
+      station?.online && station.state.game === "live"
+        ? station.state.telemetry
+        : undefined;
+    if (!t || t.x == null || t.z == null) return [];
+    return [
+      {
+        id: p.id,
+        label: p.trainee_name.split(" ")[0],
+        x: t.x,
+        z: t.z,
+        color: carColors[i % carColors.length],
+      },
+    ];
+  });
+  return (
+    <div className="live-map">
+      <TrackMap
+        track={track}
+        compact
+        cars={cars}
+        caption={
+          cars.length
+            ? `Na torze: ${cars.length} z ${run.participants.length} · pozycje co ok. 1 s`
+            : "Pozycje pojawią się po wyjeździe na tor"
+        }
+      />
+    </div>
   );
 }
 
@@ -1561,10 +1661,41 @@ function Plans({
 function Exercises({
   data,
   onModal,
+  action,
+  pending,
+  refresh,
+  notify,
 }: {
   data: Data;
   onModal: (m: Modal) => void;
+  action: (path: string, body?: unknown, message?: string) => Promise<void>;
+  pending: boolean;
+  refresh: () => Promise<void>;
+  notify: (text: string, error?: boolean) => void;
 }) {
+  const [showArchived, setShowArchived] = useState(false);
+  const archivedCount = data.exercises.filter((e) => e.archived).length;
+  const visible = data.exercises.filter((e) => showArchived || !e.archived);
+  async function remove(e: Data["exercises"][number]) {
+    const history = (e.runs ?? 0) > 0;
+    const question = history
+      ? `Scenariusz „${e.title}” ma przejazdy lub pozycje w planach. Przenieść go do archiwum? Historia zostanie zachowana.`
+      : `Usunąć scenariusz „${e.title}”? Nie ma przejazdów, więc zostanie usunięty na stałe.`;
+    if (!window.confirm(question)) return;
+    try {
+      const result = await api<{ archived: boolean }>(`/exercises/${e.id}`, {
+        method: "DELETE",
+      });
+      await refresh();
+      notify(
+        result.archived
+          ? "Scenariusz przeniesiony do archiwum. Historia przejazdów została zachowana."
+          : "Scenariusz usunięty.",
+      );
+    } catch (err) {
+      notify((err as Error).message, true);
+    }
+  }
   return (
     <>
       <PageIntro
@@ -1576,20 +1707,39 @@ function Exercises({
           <ArrowDownToLine size={16} />
           Importuj tor
         </Button>
+        <Button secondary onClick={() => onModal({ kind: "quick" })}>
+          <Gauge size={16} />
+          Szybki przejazd
+        </Button>
         <Button onClick={() => onModal({ kind: "exercise" })}>
           <Plus size={16} />
           Nowy scenariusz
         </Button>
       </PageIntro>
+      {archivedCount > 0 && (
+        <label className="toggle-archived">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+          />
+          Pokaż archiwalne ({archivedCount})
+        </label>
+      )}
       <div className="exercise-grid">
-        {data.exercises.map((e) => {
+        {visible.map((e) => {
           const track = data.tracks.find((t) => t.id === e.track_id);
           return (
-            <section key={e.id} className="panel exercise-card">
+            <section
+              key={e.id}
+              className={`panel exercise-card${e.archived ? " archived" : ""}`}
+            >
               {track && <TrackMap track={track} compact />}
               <div className="exercise-body">
                 <div className="eyebrow">
+                  {e.archived ? "ARCHIWUM · " : ""}
                   {modeName(e.mode)} · REWIZJA {e.revision}
+                  {e.runs ? ` · ${e.runs} SESJI` : ""}
                 </div>
                 <h2>{e.title}</h2>
                 <p>
@@ -1622,6 +1772,41 @@ function Exercises({
                     </strong>
                   </div>
                 </div>
+                <div className="exercise-actions">
+                  {e.archived ? (
+                    <button
+                      className="button secondary small"
+                      disabled={pending}
+                      onClick={() =>
+                        action(
+                          `/exercises/${e.id}/restore`,
+                          {},
+                          "Scenariusz przywrócony z archiwum.",
+                        )
+                      }
+                    >
+                      Przywróć
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className="button secondary small"
+                        onClick={() => onModal({ kind: "exercise", id: e.id })}
+                      >
+                        <SlidersHorizontal size={14} />
+                        Edytuj
+                      </button>
+                      <button
+                        className="button secondary small"
+                        disabled={pending}
+                        onClick={() => remove(e)}
+                      >
+                        <X size={14} />
+                        {(e.runs ?? 0) > 0 ? "Archiwizuj" : "Usuń"}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </section>
           );
@@ -1630,7 +1815,8 @@ function Exercises({
       {!data.exercises.length && (
         <section className="panel">
           <Empty title="Zbuduj katalog ćwiczeń">
-            Najpierw zaimportuj tor, następnie dodaj scenariusz.
+            Wybierz „Nowy scenariusz” – tory i auta pochodzą z gry na
+            stanowiskach. Do jednorazowej jazdy użyj „Szybki przejazd”.
           </Empty>
         </section>
       )}
@@ -2427,7 +2613,7 @@ function FormModal({
       modal.kind === "plan"
         ? modal.id || data.trainees[0]?.id || ""
         : data.trainees[0]?.id || "",
-    exercise_id: data.exercises[0]?.id || "",
+    exercise_id: data.exercises.find((e) => !e.archived)?.id || "",
     mode: "either",
     track_id: data.tracks[0]?.id || "",
     car: "abarth500",
@@ -2461,8 +2647,9 @@ function FormModal({
     trainee: "Nowy kursant",
     plan: "Indywidualny plan szkolenia",
     item: "Sesja w planie kursanta",
-    exercise: "Nowy scenariusz treningowy",
+    exercise: modal.id ? "Edytuj scenariusz" : "Nowy scenariusz treningowy",
     run: "Przygotuj sesję",
+    quick: "Szybki przejazd",
     profile: `Profil DD · ${station?.name}`,
     pair: "Zarejestruj stanowisko",
     import: "Importuj pakiet toru",
@@ -2575,9 +2762,11 @@ function FormModal({
     <Dialog
       title={titles[modal.kind]}
       subtitle={
-        modal.kind === "run"
+        modal.kind === "run" || modal.kind === "quick"
           ? "Przygotowanie nie rozpoczyna jeszcze jazdy."
-          : undefined
+          : modal.kind === "exercise" && modal.id
+            ? "Po pierwszym przejeździe zmiana toru, auta lub warunków tworzy nową rewizję."
+            : undefined
       }
       onClose={onClose}
     >
@@ -2587,10 +2776,17 @@ function FormModal({
           onSubmit={(body) => onSubmit("run", body)}
           onClose={onClose}
         />
+      ) : modal.kind === "quick" ? (
+        <QuickRunForm
+          data={data}
+          onSubmit={(body) => onSubmit("quick", body)}
+          onClose={onClose}
+        />
       ) : modal.kind === "exercise" ? (
         <ExerciseForm
           data={data}
-          onSubmit={(body) => onSubmit("exercise", body)}
+          initial={data.exercises.find((e) => e.id === modal.id)}
+          onSubmit={(body) => onSubmit("exercise", body, modal.id)}
           onClose={onClose}
         />
       ) : (
@@ -2634,11 +2830,13 @@ function FormModal({
                   value={values.exercise_id}
                   onChange={(e) => set("exercise_id", e.target.value)}
                 >
-                  {data.exercises.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.title}
-                    </option>
-                  ))}
+                  {data.exercises
+                    .filter((e) => !e.archived)
+                    .map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.title}
+                      </option>
+                    ))}
                 </select>
               </label>
               {field("title", "Nazwa sesji")}
@@ -2833,136 +3031,52 @@ function FormModal({
   );
 }
 
-function RunForm({
+type ParticipantRow = {
+  trainee_id: string;
+  station_id: string;
+  plan_item_id: string;
+};
+
+function freeStation(data: Data, rows: ParticipantRow[] = []) {
+  return (
+    data.stations.find(
+      (s) =>
+        s.online &&
+        s.state.game === "idle" &&
+        !s.attempt &&
+        !rows.some((r) => r.station_id === s.id),
+    )?.id || ""
+  );
+}
+
+/** Uczestnicy sesji: kursant, stanowisko i (dla scenariusza) pozycja planu. */
+function Participants({
   data,
-  onSubmit,
-  onClose,
+  rows,
+  setRows,
+  mode,
+  exercise,
 }: {
   data: Data;
-  onSubmit: (body: unknown) => Promise<unknown>;
-  onClose: () => void;
+  rows: ParticipantRow[];
+  setRows: (rows: ParticipantRow[]) => void;
+  mode: string;
+  exercise?: string;
 }) {
-  const [exercise, setExercise] = useState(data.exercises[0]?.id || ""),
-    [mode, setMode] = useState("individual"),
-    [race, setRace] = useState(false),
-    [raceLaps, setRaceLaps] = useState("5"),
-    [rows, setRows] = useState([
-      {
-        trainee_id: data.trainees[0]?.id || "",
-        station_id:
-          data.stations.find(
-            (s) => s.online && s.state.game === "idle" && !s.attempt,
-          )?.id || "",
-        plan_item_id: "",
-      },
-    ]),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  const selected = data.exercises.find((e) => e.id === exercise);
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await onSubmit({
-        exercise_id: exercise,
-        mode,
-        race_laps: race ? Number(raceLaps) : null,
-        participants: rows.map((r) => ({
-          ...r,
-          plan_item_id: r.plan_item_id || null,
-        })),
-      });
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
   return (
-    <form onSubmit={save}>
-      <label>
-        Ćwiczenie
-        <select
-          required
-          value={exercise}
-          onChange={(e) => {
-            setExercise(e.target.value);
-            setRows(rows.map((r) => ({ ...r, plan_item_id: "" })));
-          }}
-        >
-          {data.exercises.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.title} · {e.track_name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Tryb sesji
-        <select
-          value={mode}
-          onChange={(e) => {
-            setMode(e.target.value);
-            setRows(rows.slice(0, 1));
-          }}
-        >
-          <option value="individual">Indywidualna</option>
-          <option value="multiplayer">Grupowa na wspólnym serwerze</option>
-        </select>
-      </label>
-      <div className="form-grid">
-        <label>
-          Rodzaj
-          <select
-            value={race ? "race" : "practice"}
-            onChange={(e) => setRace(e.target.value === "race")}
-          >
-            <option value="practice">Trening na czas sesji</option>
-            <option value="race">Wyścig na liczbę okrążeń</option>
-          </select>
-        </label>
-        {race && (
-          <label>
-            Liczba okrążeń
-            <input
-              type="number"
-              min={1}
-              max={200}
-              required
-              value={raceLaps}
-              onChange={(e) => setRaceLaps(e.target.value)}
-            />
-          </label>
-        )}
-      </div>
-      {race && (
-        <p className="muted">
-          Po przejechaniu zadanej liczby okrążeń stanowisko kończy sesję, a
-          panel liczy klasyfikację. W trybie grupowym bez serwera AC każdy
-          jedzie u siebie (wyścig wirtualny).
-        </p>
-      )}
-      {selected && (
-        <div className="session-preview">
-          <Flag size={18} />
-          <span>
-            {data.carNames[selected.car] ?? selected.car} · {selected.duration}{" "}
-            min · {selected.conditions.air_temp}°C ·{" "}
-            {selected.conditions.rain ? "deszcz" : "sucho"}
-          </span>
-        </div>
-      )}
+    <>
       {rows.map((row, index) => {
-        const items = data.plans
-          .filter((p) => p.trainee_id === row.trainee_id)
-          .flatMap((p) => p.items)
-          .filter(
-            (i) =>
-              i.exercise_id === exercise &&
-              ["either", mode].includes(i.mode) &&
-              !["passed", "skipped"].includes(i.status),
-          );
+        const items = exercise
+          ? data.plans
+              .filter((p) => p.trainee_id === row.trainee_id)
+              .flatMap((p) => p.items)
+              .filter(
+                (i) =>
+                  i.exercise_id === exercise &&
+                  ["either", mode].includes(i.mode) &&
+                  !["passed", "skipped"].includes(i.status),
+              )
+          : [];
         function change(key: string, value: string) {
           setRows(
             rows.map((r, i) =>
@@ -3029,20 +3143,22 @@ function RunForm({
                 </select>
               </label>
             </div>
-            <label>
-              Sesja z planu kursanta
-              <select
-                value={row.plan_item_id}
-                onChange={(e) => change("plan_item_id", e.target.value)}
-              >
-                <option value="">Próba dodatkowa, poza planem</option>
-                {items.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.sequence}. {i.title}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {exercise && (
+              <label>
+                Sesja z planu kursanta
+                <select
+                  value={row.plan_item_id}
+                  onChange={(e) => change("plan_item_id", e.target.value)}
+                >
+                  <option value="">Próba dodatkowa, poza planem</option>
+                  {items.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.sequence}. {i.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
         );
       })}
@@ -3059,14 +3175,7 @@ function RunForm({
                   data.trainees.find(
                     (t) => !rows.some((r) => r.trainee_id === t.id),
                   )?.id || "",
-                station_id:
-                  data.stations.find(
-                    (s) =>
-                      s.online &&
-                      s.state.game === "idle" &&
-                      !s.attempt &&
-                      !rows.some((r) => r.station_id === s.id),
-                  )?.id || "",
+                station_id: freeStation(data, rows),
                 plan_item_id: "",
               },
             ])
@@ -3076,6 +3185,207 @@ function RunForm({
           Dodaj uczestnika
         </button>
       )}
+    </>
+  );
+}
+
+type SessionSettings = {
+  mode: string;
+  race: boolean;
+  raceLaps: string;
+  collisions: boolean;
+  showRivals: boolean;
+};
+
+/** Tryb, rodzaj sesji i opcje sesji grupowej (kolizje, rywale na minimapie). */
+function SessionOptionsFields({
+  value,
+  onChange,
+  onModeChange,
+}: {
+  value: SessionSettings;
+  onChange: (value: SessionSettings) => void;
+  onModeChange: (mode: string) => void;
+}) {
+  const set = (patch: Partial<SessionSettings>) =>
+    onChange({ ...value, ...patch });
+  return (
+    <>
+      <div className="form-grid">
+        <label>
+          Tryb sesji
+          <select
+            value={value.mode}
+            onChange={(e) => {
+              set({ mode: e.target.value });
+              onModeChange(e.target.value);
+            }}
+          >
+            <option value="individual">Indywidualna</option>
+            <option value="multiplayer">Grupowa</option>
+          </select>
+        </label>
+        <label>
+          Rodzaj
+          <select
+            value={value.race ? "race" : "practice"}
+            onChange={(e) => set({ race: e.target.value === "race" })}
+          >
+            <option value="practice">Trening na czas sesji</option>
+            <option value="race">Wyścig na liczbę okrążeń</option>
+          </select>
+        </label>
+        {value.race && (
+          <label>
+            Liczba okrążeń
+            <input
+              type="number"
+              min={1}
+              max={200}
+              required
+              value={value.raceLaps}
+              onChange={(e) => set({ raceLaps: e.target.value })}
+            />
+          </label>
+        )}
+      </div>
+      {value.race && (
+        <p className="muted">
+          Po przejechaniu zadanej liczby okrążeń stanowisko kończy sesję, a
+          panel liczy klasyfikację. W trybie grupowym bez serwera AC każdy
+          jedzie u siebie (wyścig wirtualny).
+        </p>
+      )}
+      {value.mode === "multiplayer" && (
+        <>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={value.collisions}
+              onChange={(e) => set({ collisions: e.target.checked })}
+            />
+            <span>
+              Kolizje między autami
+              <small>
+                Wyłączone: tryb ducha – auta przenikają się, zostają kolizje z
+                torem. Wymaga AssettoServer i CSP na stanowiskach.
+              </small>
+            </span>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={value.showRivals}
+              onChange={(e) => set({ showRivals: e.target.checked })}
+            />
+            <span>
+              Pozostali kierowcy na minimapie w grze
+              <small>
+                Niebieskie kropki z imionami w nakładce RaceCoach. Panel zawsze
+                pokazuje wszystkich na mapie sesji.
+              </small>
+            </span>
+          </label>
+        </>
+      )}
+    </>
+  );
+}
+
+const sessionBody = (o: SessionSettings, rows: ParticipantRow[]) => ({
+  mode: o.mode,
+  race_laps: o.race ? Number(o.raceLaps) : null,
+  collisions: o.mode !== "multiplayer" || o.collisions,
+  show_rivals: o.showRivals,
+  participants: rows.map((r) => ({
+    ...r,
+    plan_item_id: r.plan_item_id || null,
+  })),
+});
+
+const defaultSession: SessionSettings = {
+  mode: "individual",
+  race: false,
+  raceLaps: "5",
+  collisions: true,
+  showRivals: true,
+};
+
+function RunForm({
+  data,
+  onSubmit,
+  onClose,
+}: {
+  data: Data;
+  onSubmit: (body: unknown) => Promise<unknown>;
+  onClose: () => void;
+}) {
+  const available = data.exercises.filter((e) => !e.archived);
+  const [exercise, setExercise] = useState(available[0]?.id || ""),
+    [options, setOptions] = useState<SessionSettings>(defaultSession),
+    [rows, setRows] = useState<ParticipantRow[]>([
+      {
+        trainee_id: data.trainees[0]?.id || "",
+        station_id: freeStation(data),
+        plan_item_id: "",
+      },
+    ]),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const selected = available.find((e) => e.id === exercise);
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await onSubmit({ exercise_id: exercise, ...sessionBody(options, rows) });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form onSubmit={save}>
+      <label>
+        Ćwiczenie
+        <select
+          required
+          value={exercise}
+          onChange={(e) => {
+            setExercise(e.target.value);
+            setRows(rows.map((r) => ({ ...r, plan_item_id: "" })));
+          }}
+        >
+          {available.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.title} · {e.track_name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <SessionOptionsFields
+        value={options}
+        onChange={setOptions}
+        onModeChange={() => setRows(rows.slice(0, 1))}
+      />
+      {selected && (
+        <div className="session-preview">
+          <Flag size={18} />
+          <span>
+            {data.carNames[selected.car] ?? selected.car} · {selected.duration}{" "}
+            min · {selected.conditions.air_temp}°C ·{" "}
+            {selected.conditions.rain ? "deszcz" : "sucho"}
+          </span>
+        </div>
+      )}
+      <Participants
+        data={data}
+        rows={rows}
+        setRows={setRows}
+        mode={options.mode}
+        exercise={exercise}
+      />
       <p className="muted">
         Agent sprawdzi zawartość i gotowość. Przy sesji grupowej wszyscy
         uczestnicy korzystają z tego samego scenariusza.
@@ -3089,11 +3399,70 @@ function RunForm({
         <button type="button" className="button secondary" onClick={onClose}>
           Anuluj
         </button>
-        <button className="button" disabled={busy || !data.exercises.length}>
+        <button className="button" disabled={busy || !available.length}>
           {busy ? "Zlecanie…" : "Przygotuj stanowiska"}
           <ArrowRight size={16} />
         </button>
       </div>
     </form>
+  );
+}
+
+/** Szybki przejazd: tor, auto i warunki bez zapisywania scenariusza. */
+function QuickRunForm({
+  data,
+  onSubmit,
+  onClose,
+}: {
+  data: Data;
+  onSubmit: (body: unknown) => Promise<unknown>;
+  onClose: () => void;
+}) {
+  const [options, setOptions] = useState<SessionSettings>(defaultSession),
+    [rows, setRows] = useState<ParticipantRow[]>([
+      {
+        trainee_id: data.trainees[0]?.id || "",
+        station_id: freeStation(data),
+        plan_item_id: "",
+      },
+    ]);
+  return (
+    <ExerciseForm
+      data={data}
+      quick
+      onClose={onClose}
+      submitLabel="Przygotuj stanowiska"
+      onSubmit={(body) =>
+        onSubmit({
+          track_id: body.track_id,
+          car: body.car,
+          duration: body.duration,
+          conditions: body.conditions,
+          title: `Szybki przejazd · ${body.title}`.slice(0, 150),
+          ...sessionBody(options, rows),
+        })
+      }
+      extra={
+        <>
+          <SessionOptionsFields
+            value={options}
+            onChange={setOptions}
+            onModeChange={() => setRows(rows.slice(0, 1))}
+          />
+          <Participants
+            data={data}
+            rows={rows}
+            setRows={setRows}
+            mode={options.mode}
+          />
+        </>
+      }
+      note={
+        <p className="muted">
+          Szybki przejazd nie trafia do listy scenariuszy, ale okrążenia liczą
+          się do rankingów auta i toru, a przejazd jest w historii i analizie.
+        </p>
+      }
+    />
   );
 }

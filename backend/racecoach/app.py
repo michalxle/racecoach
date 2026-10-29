@@ -149,6 +149,11 @@ def create_app(data_dir: str | Path | None = None, demo=False, bootstrap_admin=T
     def health():
         return {"status": "ok", "version": "0.1.0"}
 
+    @app.get("/api/ac/no-collisions.lua", include_in_schema=False)
+    def no_collisions_script():
+        # Pobierany przez CSP na stanowiskach w sesji grupowej bez kolizji; zawiera tylko stały skrypt.
+        return Response((Path(__file__).with_name("ac") / "no_collisions.lua").read_text(encoding="utf-8"), media_type="text/x-lua")
+
     @app.get("/api/meta")
     def meta():
         return {"demo": demo, "weather_bridge": demo or bool(os.getenv("RACECOACH_WEATHER_BRIDGE") and os.getenv("RACECOACH_WEATHER_TOKEN")),

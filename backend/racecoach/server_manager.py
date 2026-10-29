@@ -84,6 +84,11 @@ def set_yaml_keys(text, values):
     return "\n".join(lines) + "\n"
 
 
+def collision_script_section(url):
+    """Sekcja csp_extra_options.ini z online-skryptem CSP wyłączającym kolizje między autami."""
+    return f"\n[SCRIPT_90-racecoach_no_collisions]\nSCRIPT = '{url}'\n"
+
+
 class RconError(RuntimeError):
     pass
 
@@ -182,6 +187,7 @@ class ServerManager:
                 raise RuntimeError("Niepoprawna instalacja dedykowanego serwera AC")
             kind = self.kind
             cfg_path, entry_path, extra_path = folder / "cfg/server_cfg.ini", folder / "cfg/entry_list.ini", folder / "cfg/extra_cfg.yml"
+            csp_path = folder / "cfg/csp_extra_options.ini"
             if not cfg_path.exists():
                 raise RuntimeError("Brak bazowego cfg/server_cfg.ini; przygotuj oddzielną instalację serwera")
             config = configparser.ConfigParser(interpolation=None)
@@ -207,6 +213,10 @@ class ServerManager:
                 raise RuntimeError("Bazowy serwer obsługuje godziny dzienne; pozostałe wymagają integracji CSP")
             server["SUN_ANGLE"] = str(round((hour + minute / 60 - 13) * 16))
             rain = start_rain(conditions)
+            collisions = scenario.get("collisions", True)
+            if not collisions and kind != ASSETTOSERVER:
+                raise RuntimeError("Jazda bez kolizji wymaga AssettoServer (skrypt CSP); acServer.exe od Kunos zawsze ma kolizje. "
+                                   "Włącz kolizje albo ustaw RACECOACH_SERVER_EXECUTABLE na AssettoServer.exe")
             graphics = conditions["weather"]
             if kind == ASSETTOSERVER:
                 # AssettoServer czyta typ WeatherFX z GRAPHICS ("3_clear_type=7"); bez niego nie ma deszczu ani przejść.
@@ -227,7 +237,7 @@ class ServerManager:
             self.backups = []
             backup_dir = self.data_dir / "server-backups" / run_id
             backup_dir.mkdir(parents=True, exist_ok=True)
-            managed = (cfg_path, entry_path, extra_path) if kind == ASSETTOSERVER else (cfg_path, entry_path)
+            managed = (cfg_path, entry_path, extra_path, csp_path) if kind == ASSETTOSERVER else (cfg_path, entry_path)
             for path in managed:
                 backup = backup_dir / path.name
                 if path.exists():
@@ -243,6 +253,11 @@ class ServerManager:
                 if kind == ASSETTOSERVER:
                     extra = extra_path.read_text(encoding="utf-8-sig") if extra_path.exists() else ""
                     extra_path.write_text(set_yaml_keys(extra, {"EnableWeatherFx": "true", "RconPort": str(self.rcon_port)}), encoding="utf-8")
+                    if not collisions:
+                        # Skrypt pobiera każde stanowisko z centrali (port panelu musi być otwarty w sieci: -Lan).
+                        url = f"http://{os.environ['RACECOACH_SERVER_HOST']}:{os.getenv('RACECOACH_PORT', '8000')}/api/ac/no-collisions.lua"
+                        current = csp_path.read_text(encoding="utf-8-sig") if csp_path.exists() else ""
+                        csp_path.write_text(current.rstrip() + "\n" + collision_script_section(url), encoding="utf-8")
                 self.log = (backup_dir / "server.log").open("ab")
                 self.process = subprocess.Popen([str(binary)], cwd=folder, stdout=self.log, stderr=subprocess.STDOUT)
                 self.run_id = run_id

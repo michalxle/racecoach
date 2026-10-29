@@ -37,6 +37,8 @@ export type Exercise = {
   revision: number;
   hardware_profile?: { degrees: number; strength: number } | null;
   reference?: { attempt_id: string; lap: number } | null;
+  archived?: boolean;
+  runs?: number;
 };
 export type PlanItem = {
   id: string;
@@ -117,6 +119,10 @@ export type Scenario = {
   duration: number;
   mode: string;
   race_laps?: number | null;
+  collisions?: boolean;
+  show_rivals?: boolean;
+  quick?: boolean;
+  virtual_race?: boolean;
 };
 export type Attempt = {
   id: string;

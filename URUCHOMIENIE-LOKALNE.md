@@ -133,8 +133,23 @@ Parametry dopisuje się po nazwie pliku w PowerShell/cmd, np. `START-RaceCoach.b
 - Konta kursantów z hasłami; kursant loguje się osobno i widzi tylko swój plan, próby i zatwierdzony wzorzec.
 - Plany szkolenia: kolejne pozycje (ćwiczenia) z celem, kryteriami zaliczenia, terminem i statusem.
 - Scenariusze (ćwiczenia): tor/layout, auto, pogoda, pora dnia, temperatura, przyczepność, czas sesji,
-  opcjonalny profil bazy DD (kąt obrotu, siła). Zmiana warunków = nowy scenariusz, historia się nie zmienia.
+  opcjonalny profil bazy DD (kąt obrotu, siła). **Edytuj / Usuń** na karcie scenariusza: bez przejazdów zmiana
+  jest w miejscu, a usunięcie trwałe; po pierwszym przejeździe zmiana toru, auta lub warunków tworzy nową rewizję
+  (stara trafia do archiwum, otwarte pozycje planów przechodzą na nową), a „usunięcie” archiwizuje — historia,
+  rekordy i wzorce się nie zmieniają. Archiwum: „Pokaż archiwalne” → **Przywróć**.
+- **Szybki przejazd** (Stanowiska lub Scenariusze): tor, auto, warunki i uczestnicy w jednym oknie, bez zapisywania
+  scenariusza. Przejazd jest w historii, analizie i rankingach auta+toru, ale nie zaśmieca listy scenariuszy.
 - Stanowiska: stan online, stan gry, wykryte auta/tory, stan bazy DD i kontrolerów, dziennik poleceń.
+
+**Sesja grupowa**
+- **Kolizje między autami** (przy przygotowaniu sesji grupowej): wyłączone = tryb ducha, auta przenikają się,
+  zostają kolizje z torem. Wymaga AssettoServer i CSP na stanowiskach — centrala dopisuje na czas sesji do
+  `cfg\csp_extra_options.ini` serwera skrypt CSP pobierany z panelu (`/api/ac/no-collisions.lua`, więc centrala
+  musi działać z `-Lan`). Z `acServer.exe` Kunos przygotowanie bez kolizji jest odrzucane.
+- **Mapa sesji na żywo**: w Stanowiska → Aktywne sesje mapa toru z kropką i imieniem każdego kierowcy
+  (pozycje z telemetrii, ok. 1 raz/s), także w wyścigu wirtualnym.
+- **Rywale na minimapie w grze**: niebieskie kropki z imionami pozostałych uczestników w nakładce RaceCoach
+  (oknie nad grą). Można to wyłączyć przy przygotowaniu sesji.
 
 **Sesja na stanowisku**
 - Przygotowanie → potwierdzenie gotowości → Start → Zakończ; agent sam konfiguruje i uruchamia `acs.exe`,

@@ -94,11 +94,13 @@ class Participant(Model):
     plan_item_id: str | None = None
 
 
-class RunCreate(Model):
-    exercise_id: str
+class SessionOptions(Model):
     mode: Literal["individual", "multiplayer"]
     participants: list[Participant] = Field(min_length=1, max_length=24)
     race_laps: int | None = Field(default=None, ge=1, le=200)
+    # Sesja grupowa na serwerze: kolizje między autami i pozycje innych kierowców na minimapie w grze.
+    collisions: bool = True
+    show_rivals: bool = True
 
     @model_validator(mode="after")
     def unique_participants(self):
@@ -109,6 +111,19 @@ class RunCreate(Model):
             if len(set(values)) != len(values):
                 raise ValueError("Kursant i stanowisko mogą wystąpić tylko raz")
         return self
+
+
+class RunCreate(SessionOptions):
+    exercise_id: str
+
+
+class QuickRunCreate(SessionOptions):
+    """Szybki przejazd: tor, auto i warunki bez zapisanego scenariusza."""
+    track_id: str
+    car: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.-]+$")
+    conditions: Conditions = Field(default_factory=Conditions)
+    duration: int = Field(default=15, ge=1, le=180)
+    title: str | None = Field(default=None, max_length=150)
 
 
 class Heartbeat(Model):

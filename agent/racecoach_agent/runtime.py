@@ -58,6 +58,7 @@ class Agent:
         self.coach = None
         self.idle_message = None
         self.overlay_layout = {}
+        self.rivals = []
         self.track_map = None
         self.content = None
         self.overlay_port, self.overlay_window, self.kiosk = overlay_port, overlay_window, kiosk
@@ -75,6 +76,8 @@ class Agent:
         else:
             state = {"active": False, "state": self.game, "session": {}, "live": {}, "message": self.idle_message}
         state["layout"] = self.overlay_layout
+        # Pozostali kierowcy sesji (z centrali, ok. 1 raz/s) - kropki na minimapie.
+        state["rivals"] = self.rivals if coach else []
         state["map"] = {"url": "/map.png", "ini": self.track_map["ini"]} if coach and self.track_map else None
         return state
 
@@ -349,6 +352,7 @@ class Agent:
                 if coach:
                     coach.pop("layout", None)
                     coach.pop("map", None)
+                    coach.pop("rivals", None)
                 response = self.client.post("/api/agent/heartbeat", json={"version": "0.2.0", "game": self.game,
                     "hardware": hardware, "capabilities": capabilities, "catalog": catalog,
                     "active_attempt": self.active["attempt_id"] if self.active else None,
@@ -356,6 +360,7 @@ class Agent:
                 response.raise_for_status()
                 reply = response.json()
                 self.overlay_layout = reply.get("overlay") or {}
+                self.rivals = reply.get("rivals") or []
                 if self.content and reply.get("content_hash") != self.content["hash"]:
                     self.client.post("/api/agent/content", json=self.content).raise_for_status()
                     log.info("Wysłano katalog treści gry (%d aut, %d torów)", len(self.content["cars"]), len(self.content["tracks"]))

@@ -27,6 +27,25 @@ export function nearest(points: Sample[], p: number) {
   );
 }
 
+/** Kierowca na żywo na mapie (pozycja z ostatniego heartbeatu stanowiska). */
+export type MapCar = {
+  id: string;
+  label: string;
+  x: number;
+  z: number;
+  color: string;
+};
+export const carColors = [
+  "#ff9a63",
+  "#5aa9ff",
+  "#73d6a3",
+  "#f4d35e",
+  "#d78cf2",
+  "#ff6f91",
+  "#7fdbda",
+  "#c0c7cf",
+];
+
 export function TrackMap({
   track,
   sections = [],
@@ -36,6 +55,8 @@ export function TrackMap({
   reference = [],
   progress,
   compact = false,
+  cars = [],
+  caption,
 }: {
   track: Track;
   sections?: SectionResult[];
@@ -45,6 +66,8 @@ export function TrackMap({
   reference?: Sample[];
   progress?: number;
   compact?: boolean;
+  cars?: MapCar[];
+  caption?: string;
 }) {
   const { ref, width } = useWidth();
   const height = compact ? 250 : width < 400 ? 270 : 360;
@@ -205,6 +228,30 @@ export function TrackMap({
             </text>
           )}
         </g>
+        {cars.map((c) => {
+          const [x, y] = project(c.x, c.z);
+          return (
+            <g
+              key={c.id}
+              className="map-car"
+              style={{
+                transform: `translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`,
+              }}
+            >
+              <circle r="11" fill={c.color} opacity=".22" />
+              <circle r="6" fill={c.color} stroke="#0d161d" strokeWidth="2" />
+              <text
+                y="-12"
+                textAnchor="middle"
+                fill="#eef2f4"
+                fontSize="11"
+                fontWeight="600"
+              >
+                {c.label}
+              </text>
+            </g>
+          );
+        })}
         {position && (
           <g
             transform={`translate(${project(position.x, position.z).join(",")})`}
@@ -217,7 +264,10 @@ export function TrackMap({
       <div className="map-bottom">
         <strong>{track.name}</strong>
         <span>
-          {sections.length ? "Kolor: wynik lokalnej sekcji" : "Geometria trasy"}
+          {caption ??
+            (sections.length
+              ? "Kolor: wynik lokalnej sekcji"
+              : "Geometria trasy")}
         </span>
       </div>
     </div>

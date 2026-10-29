@@ -19,5 +19,8 @@ racecoach = "racecoach.__main__:main"
 [tool.setuptools.packages.find]
 where = ["."]
 
+[tool.setuptools.package-data]
+racecoach = ["ac/*.lua"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
