@@ -75,10 +75,13 @@ class Launcher:
         if not 8 * 60 <= hour * 60 + minute <= 18 * 60:
             raise RuntimeError("Podstawowy adapter obsługuje godziny 08:00–18:00; pozostałe wymagają adaptera CSP")
         live_weather = scenario["mode"] != "multiplayer" and self.weather.available()
+        # W sesji grupowej deszcz przychodzi z AssettoServer przez CSP; lokalnego kontrolera nie instalujemy.
+        server_weather = scenario["mode"] == "multiplayer" and bool((scenario.get("connection") or {}).get("csp_weather"))
         if scenario["conditions"].get("rain", 0) and not live_weather:
-            if scenario["mode"] == "multiplayer":
-                raise RuntimeError("Deszcz w sesji grupowej wymaga mostu pogodowego serwera; nie zostanie uruchomiony jako suchy")
-            raise RuntimeError("Deszcz wymaga Custom Shaders Patch z włączonym WeatherFX (folder extension w grze); nie zostanie uruchomiony jako suchy")
+            if scenario["mode"] == "multiplayer" and not server_weather:
+                raise RuntimeError("Deszcz w sesji grupowej wymaga AssettoServer z CSP WeatherFX na komputerze centrali; nie zostanie uruchomiony jako suchy")
+            if not self.weather.available():
+                raise RuntimeError("Deszcz wymaga Custom Shaders Patch z włączonym WeatherFX (folder extension w grze); nie zostanie uruchomiony jako suchy")
         if self.backup.exists() or self.existed.exists() or self.weather.pending_restore():
             raise RuntimeError("Pozostała kopia konfiguracji po poprzednim uruchomieniu. Uruchom agenta z --restore-config po zamknięciu gry")
         if scenario["mode"] == "multiplayer" and not scenario.get("connection"):
@@ -165,6 +168,8 @@ class Launcher:
                         actual["conditions_requested"] = scenario["conditions"]
                         actual["conditions_confirmation"] = "configuration_only"
                         actual["weather_control"] = False
+                        if scenario["mode"] == "multiplayer" and (scenario.get("connection") or {}).get("csp_weather"):
+                            actual["conditions_confirmation"] = "server_csp"
                         if self.weather_active:
                             state = self.weather.confirm_start()
                             if state is not None:

@@ -14,6 +14,9 @@
 .EXAMPLE
   .\scripts\local-start.ps1 -Kiosk -NoOverlayWindow
 .EXAMPLE
+  .\scripts\local-start.ps1 -Lan -AcServer "C:\RaceCoachServer"
+  Sesje grupowe na wspólnym serwerze. Z AssettoServer.exe w tym folderze także deszcz CSP.
+.EXAMPLE
   .\scripts\local-start.ps1 -Hardware openffboard -DDControl "C:\sim_soft\wheel-control" -MaxStrength 25
 #>
 param(
@@ -30,7 +33,10 @@ param(
     [switch]$Rebuild,
     [switch]$NewStation,
     [switch]$NoOverlayWindow,
-    [switch]$Kiosk
+    [switch]$Kiosk,
+    [string]$AcServer = "",
+    [string]$AcServerHost = "",
+    [switch]$NoAcServer
 )
 . (Join-Path $PSScriptRoot "local-common.ps1")
 $Host.UI.RawUI.WindowTitle = "RaceCoach - uruchamianie"
@@ -82,12 +88,42 @@ if (-not $NoAgent) {
     if (Get-Process acs -ErrorAction SilentlyContinue) { Write-Warn "Assetto Corsa jest włączone - zamknij grę; sesję uruchamia agent." }
 }
 
+# ---------- serwer AC sesji grupowych ----------
+if ($NoAcServer) { Set-ConfigValue $config "acServer" ""; Save-LocalConfig $config }
+if (-not $AcServer -and -not $NoAcServer -and $config.PSObject.Properties["acServer"]) { $AcServer = $config.acServer }
+if ($AcServer) {
+    Write-Step "Serwer AC do sesji grupowych"
+    $AcServer = (Resolve-Path -LiteralPath $AcServer -ErrorAction SilentlyContinue).Path
+    if (-not $AcServer) { Stop-WithError "Nie ma folderu serwera podanego w -AcServer." }
+    $exe = @("AssettoServer.exe", "acServer.exe") | ForEach-Object { Join-Path $AcServer $_ } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $exe) { Stop-WithError "W $AcServer nie ma AssettoServer.exe ani acServer.exe." }
+    if (-not (Test-Path -LiteralPath (Join-Path $AcServer "cfg\server_cfg.ini"))) { Stop-WithError "W $AcServer brakuje cfg\server_cfg.ini." }
+    if (-not $AcServerHost -and $config.PSObject.Properties["acServerHost"]) { $AcServerHost = $config.acServerHost }
+    if (-not $AcServerHost) {
+        $lan = Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq "Up" } | Select-Object -First 1
+        if ($lan) { $AcServerHost = @($lan.IPv4Address)[0].IPAddress }
+        if (-not $AcServerHost) { Stop-WithError "Nie wykryto adresu IP w sieci lokalnej - podaj go: -AcServerHost 192.168.x.x" }
+    }
+    $env:RACECOACH_SERVER_DIR = $AcServer
+    $env:RACECOACH_SERVER_EXECUTABLE = $exe
+    $env:RACECOACH_SERVER_HOST = $AcServerHost
+    if (-not $env:RACECOACH_SERVER_PORT) { $env:RACECOACH_SERVER_PORT = "9600" }
+    Set-ConfigValue $config "acServer" $AcServer
+    Set-ConfigValue $config "acServerHost" $AcServerHost
+    Save-LocalConfig $config
+    if ((Split-Path $exe -Leaf) -ieq "AssettoServer.exe") { Write-Ok "AssettoServer: $exe (deszcz CSP w sesjach grupowych)" }
+    else { Write-Ok "acServer Kunos: $exe (sesje grupowe tylko na sucho; deszcz wymaga AssettoServer)" }
+    Write-Ok "Adres dla stanowisk: ${AcServerHost}:$($env:RACECOACH_SERVER_PORT)"
+    if (-not $Lan) { Write-Warn "Bez -Lan inne komputery nie połączą się z centralą." }
+}
+
 # ---------- centrala ----------
 Write-Step "Centrala (panel instruktora)"
 if (Test-Server $baseUrl) {
     $meta = Invoke-RestMethod "$baseUrl/api/meta"
     if ($meta.demo) { Stop-WithError "Na porcie $Port działa tryb DEMO. Zamknij okno demo albo użyj innego portu (-Port 8002)." }
     Write-Ok "Centrala już działa - używam jej."
+    if ($AcServer) { Write-Warn "Ustawienia serwera AC zadziałają dopiero po ponownym uruchomieniu centrali (Ctrl+C w oknie CENTRALA)." }
 } else {
     $command = @"
 `$Host.UI.RawUI.WindowTitle = 'RaceCoach - CENTRALA  (Ctrl+C zatrzymuje)'

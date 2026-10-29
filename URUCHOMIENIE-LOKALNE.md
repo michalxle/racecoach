@@ -80,8 +80,9 @@ automatycznie w Edge przy starcie sesji (przydatne przy osobnym monitorze stanow
 
 **Wyścig:** w „Przygotuj sesję” wybierz „Wyścig na liczbę okrążeń”. Po ostatnim okrążeniu stanowisko
 kończy sesję, a panel pokazuje klasyfikację (okrążenia, łączny czas, strata, najlepsze okrążenie). W trybie
-grupowym bez skonfigurowanego serwera AC każdy jedzie na swoim stanowisku (wyścig wirtualny), z serwerem —
-na wspólnym torze.
+grupowym bez skonfigurowanego serwera AC każdy jedzie na swoim stanowisku (wyścig wirtualny, deszcz działa
+lokalnie na każdym stanowisku), z serwerem — na wspólnym torze. Deszcz na wspólnym torze wymaga AssettoServer
+(`-AcServer`, [instrukcja](docs/windows-station.md#deszcz-w-sesji-grupowej-assettoserver)).
 
 Kolejne uruchomienia: tylko `START-RaceCoach.bat` — instalacja, ścieżki i token stanowiska są zapamiętane.
 
@@ -111,6 +112,8 @@ Parametry dopisuje się po nazwie pliku w PowerShell/cmd, np. `START-RaceCoach.b
 | `-Port 8002` | Inny port panelu (gdy 8000 jest zajęty). Podaj ten sam port dla `PRZYGOTUJ-SCENARIUSZ.bat`. |
 | `-Hardware openffboard` / `ffbeast` `-DDControl "C:\sim_soft\wheel-control"` `-MaxStrength 25` | Zdalne profile bazy DD przez projekt `wheel-control`. Zamknij wtedy GUI DD Control/Configurator. Bez tego gra używa kierownicy normalnie. |
 | `-Lan` | Udostępnia panel w sieci lokalnej (np. tablet instruktora, drugie stanowisko). Wymaga zgody w zaporze. |
+| `-AcServer "C:\RaceCoachServer"` | Folder osobnej instalacji serwera do sesji grupowych na wspólnym torze (z `AssettoServer.exe` — także deszcz). Zapamiętywany; używaj z `-Lan`. Wyłączenie: `-NoAcServer`. |
+| `-AcServerHost 192.168.x.x` | Adres serwera dla stanowisk, gdy automatyczne wykrycie IP wybierze złą kartę sieciową. |
 | `-NewStation` | Rejestruje stanowisko od nowa (nowy token). |
 | `-NoOverlayWindow` | Bez okna nakładek nad grą (i bez instalacji PySide6); zostają aplikacje RaceCoach w grze. |
 | `-Kiosk` | Przy starcie sesji otwiera ekran kierowcy w Edge na pełnym ekranie. |
@@ -156,7 +159,7 @@ Parametry dopisuje się po nazwie pliku w PowerShell/cmd, np. `START-RaceCoach.b
 
 **Ograniczenia na jednym komputerze**
 - Tylko jedno stanowisko (jeden agent na komputer). Sesje grupowe wymagają drugiego komputera i osobnej
-  instalacji serwera AC — obejrzysz je w trybie demo. Pogoda w sesji grupowej wymaga mostu serwera.
+  instalacji serwera AC — obejrzysz je w trybie demo. Deszcz na wspólnym serwerze wymaga AssettoServer.
 - Godziny 08:00–18:00.
 - Sekcje toru z importu to równe odcinki, nie zakręty — popraw je w JSON (`.local\live\tracks\`),
   zmień `id` i zaimportuj w **Scenariusze → Importuj tor**.

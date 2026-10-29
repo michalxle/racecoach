@@ -117,6 +117,37 @@ ponownym użyciem instalacji. Klienci nadal potwierdzają rzeczywiście załadow
 Sesja grupowa jest wspólnym treningiem Practice. Formalne wyścigi, kwalifikacje, kontrola
 Steam GUID i import oficjalnych wyników serwera są kolejnym rozszerzeniem.
 
+### Deszcz w sesji grupowej: AssettoServer
+
+`acServer.exe` od Kunos nie obsługuje deszczu, więc centrala odmawia z nim scenariusza deszczowego.
+Deszcz na wspólnym serwerze działa z [AssettoServer](https://assettoserver.org) (serwer zgodny z AC,
+z pogodą CSP WeatherFX). Centrala rozpoznaje go po nazwie pliku `AssettoServer.exe`
+(albo `RACECOACH_SERVER_KIND=assettoserver`).
+
+1. Pobierz `assetto-server-win-x64.zip` z wydań AssettoServer na GitHubie i rozpakuj do osobnego
+   folderu, np. `C:\RaceCoachServer`.
+2. Przygotuj `cfg\server_cfg.ini` i folder `content` z autami i torami ćwiczeń: w Content Managerze
+   Serwer → preset → **Pack** (Windows, bez „Include executable”), rozpakuj paczkę do tego samego folderu.
+   Uruchom raz `AssettoServer.exe`, żeby utworzył `cfg\extra_cfg.yml`, i zamknij go.
+3. Uruchom centralę z tym folderem — `START-RaceCoach.bat -Lan -AcServer "C:\RaceCoachServer"` (zapamiętywane)
+   albo ręcznie przez zmienne `RACECOACH_SERVER_*` jak wyżej, z `RACECOACH_SERVER_EXECUTABLE=...\AssettoServer.exe`.
+4. Zapora na komputerze centrali: TCP+UDP `RACECOACH_SERVER_PORT` (9600) i TCP `HTTP_PORT` (8081).
+5. Na każdym stanowisku: CSP z włączonym WeatherFX (deszcz online wymaga wersji CSP z RainFX).
+
+Na czas sesji centrala:
+
+- zapisuje w `server_cfg.ini` typ pogody WeatherFX (`GRAPHICS=3_clear_type=7`, typ z intensywności deszczu)
+  i losowe `ADMIN_PASSWORD` tej sesji;
+- w `extra_cfg.yml` włącza `EnableWeatherFx: true` i `RconPort` (domyślnie `9610`, zmienna
+  `RACECOACH_SERVER_RCON_PORT`; port jest używany tylko lokalnie i nie wymaga reguły w zaporze);
+- po starcie serwera ustawia przez RCON dokładny deszcz, mokrość i wodę (`setrain`), tak samo jak
+  w treningu indywidualnym: tor jest mokry od startu;
+- **Stanowiska → Zmień warunki** wysyła `setrain` do serwera; przejście jest rozkładane na kroki co 1 s.
+  Dalej mokrość i kałuże zmieniają się według modelu AssettoServer (tor schnie lub nasiąka).
+
+Wszystkie trzy pliki konfiguracji są przywracane po zakończeniu sesji. Agent w sesji grupowej nie
+instaluje własnego kontrolera pogody — warunki przychodzą z serwera, a potwierdzenie ma status `server_csp`.
+
 ## Pogoda i CSP
 
 Podstawowy adapter obsługuje lokalne pakiety pogody oraz godziny dzienne 08:00–18:00.
@@ -124,8 +155,9 @@ Sprawdza obecność pakietu w `content/weather`. Ustawia zerowy wiatr i wyłącz
 przyczepności w generowanej konfiguracji. Nie gwarantuje przejęcia kontroli nad zewnętrznym
 kontrolerem Pure/Sol/CSP; aktualne warunki mają status `configuration_only`.
 
-Rzeczywisty deszcz i zmiana warunków podczas jazdy wymagają osobno wdrożonego mostu do
-wybranej wersji kontrolera/serwera. RaceCoach ma klienta tego kontraktu:
+Deszcz w treningu indywidualnym i w wyścigu wirtualnym obsługuje kontroler `racecoach` instalowany
+przez agenta. W sesji grupowej na wspólnym serwerze — AssettoServer (sekcja wyżej). Dla innych
+serwerów zostaje osobno wdrożony most do wybranej wersji kontrolera/serwera. RaceCoach ma klienta tego kontraktu:
 
 - środowisko centrali: `RACECOACH_WEATHER_BRIDGE`, `RACECOACH_WEATHER_TOKEN`;
 - żądanie: `POST <bridge>/weather`, nagłówek `Authorization: Bearer ...`;

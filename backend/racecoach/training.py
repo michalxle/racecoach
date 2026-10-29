@@ -24,13 +24,16 @@ def enqueue(c, station_id, kind, payload, ttl=90):
 WEATHER_CAPABILITIES = {"weather.csp", "weather.demo"}
 
 
-def weather_control(mode, capabilities):
-    """Czy sesję można zmieniać na żywo: kontroler CSP na stanowisku, demo albo most serwera grupowego."""
+def weather_control(mode, capabilities, server_live=False):
+    """Czy sesję można zmieniać na żywo: kontroler CSP na stanowisku, demo, AssettoServer albo most serwera grupowego.
+
+    ``mode`` to tryb scenariusza: wyścig wirtualny ma tryb ``individual`` (każde stanowisko ma własną pogodę).
+    """
     if capabilities and all("weather.demo" in caps for caps in capabilities):
         return True
     if mode == "individual":
         return bool(capabilities) and all(WEATHER_CAPABILITIES & set(caps) for caps in capabilities)
-    return bool(os.getenv("RACECOACH_WEATHER_BRIDGE") and os.getenv("RACECOACH_WEATHER_TOKEN"))
+    return bool(server_live or (os.getenv("RACECOACH_WEATHER_BRIDGE") and os.getenv("RACECOACH_WEATHER_TOKEN")))
 
 
 def decode_track(row):
@@ -111,10 +114,11 @@ def register_training_routes(app, db):
         rows = db.all("SELECT r.*,e.title FROM runs r JOIN exercises e ON e.id=r.exercise_id ORDER BY r.created DESC LIMIT 100")
         for row in rows:
             row["scenario"] = json.loads(row["scenario"])
-            row["scenario"].pop("connection", None)
+            server_weather = bool((row["scenario"].pop("connection", None) or {}).get("csp_weather"))
             row["participants"] = db.all("SELECT a.id,a.status,a.station_id,a.trainee_id,u.name AS trainee_name,s.name AS station_name FROM attempts a JOIN users u ON u.id=a.trainee_id JOIN stations s ON s.id=a.station_id WHERE a.run_id=?", (row["id"],))
             states = db.all("SELECT s.state FROM attempts a JOIN stations s ON s.id=a.station_id WHERE a.run_id=?", (row["id"],))
-            row["weather_control"] = weather_control(row["mode"], [json.loads(s["state"]).get("capabilities", []) for s in states])
+            row["weather_control"] = weather_control(row["scenario"].get("mode", row["mode"]), [json.loads(s["state"]).get("capabilities", []) for s in states],
+                                                    server_weather and app.state.server_manager.live_weather)
             if row["scenario"].get("race_laps"):
                 from .coaching import classification
                 row["classification"] = classification(db, row["id"], row["scenario"]["race_laps"])
@@ -149,7 +153,8 @@ def register_training_routes(app, db):
                 if item["status"] in ("passed", "skipped"):
                     raise HTTPException(409, "Pozycja planu jest zamknięta; zmień status przed kolejną próbą")
             rain = json.loads(exercise["conditions"]).get("rain", 0)
-            if rain and not source["simulated"] and body.mode == "individual" and "weather.csp" not in state.get("capabilities", []):
+            # Deszcz zawsze wymaga CSP z WeatherFX na stanowisku: lokalnie steruje nim agent, w grupie - AssettoServer.
+            if rain and not source["simulated"] and "weather.csp" not in state.get("capabilities", []):
                 raise HTTPException(409, "Stanowisko " + source["name"] + " nie ma Custom Shaders Patch z WeatherFX; deszcz jest niedostępny")
             if not source["simulated"]:
                 required = {f"track:{track['game_id']}:{track['layout']}", "car:" + exercise["car"]}
@@ -251,14 +256,20 @@ def register_training_routes(app, db):
         if run["status"] != "running":
             raise HTTPException(409, "Zmiana pogody wymaga trwającej sesji")
         participants = db.all("SELECT a.id AS attempt_id,a.station_id,a.status,s.simulated,s.state FROM attempts a JOIN stations s ON s.id=a.station_id WHERE a.run_id=?", (run_id,))
-        if run["mode"] == "individual" and not all(p["simulated"] for p in participants):
-            actual = change_station_weather(run_id, participants[0], body, actor)
+        scenario_mode = json.loads(run["scenario"]).get("mode", run["mode"])
+        if scenario_mode == "individual" and not all(p["simulated"] for p in participants):
+            # Trening indywidualny albo wyścig wirtualny: każde stanowisko zmienia własną pogodę CSP.
+            driving = participants if len(participants) == 1 else [p for p in participants if p["status"] == "running"]
+            if not driving:
+                raise HTTPException(409, "Żaden kursant nie jeździ w tej chwili")
+            results = [change_station_weather(run_id, p, body, actor) for p in driving]
+            actual = results[0] if len(results) == 1 else {"confirmed": True, **body.model_dump(), "stations": results}
         elif not all(p["simulated"] for p in participants):
             try:
                 actual = app.state.server_manager.weather(run_id, body.model_dump())
             except Exception as exc:
                 db.audit(actor["id"], "weather.failed", run_id, {"error": str(exc)})
-                raise HTTPException(409, "Most pogodowy nie potwierdził zmiany. Sprawdź konfigurację i dziennik")
+                raise HTTPException(409, "Serwer AC nie potwierdził zmiany pogody: " + str(exc))
         else:
             actual = {"confirmed": True, "simulated": True, **body.model_dump()}
         db.audit(actor["id"], "weather.changed", run_id, actual)
